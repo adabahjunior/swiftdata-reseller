@@ -1,6 +1,8 @@
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useState } from 'react'
 import { useAuth } from '../../context/AuthContext'
+import { useAutoDeliverPoll } from '../../hooks/useAutoDeliverPoll'
+import { OrderTrackerFab } from './OrderTrackerFab'
 import { DashboardHeader, Sidebar } from './Sidebar'
 
 const PAGE_TITLES: Record<string, string> = {
@@ -19,6 +21,7 @@ export function DashboardLayout() {
   const navigate = useNavigate()
   const { pathname } = useLocation()
   const [menuOpen, setMenuOpen] = useState(false)
+  useAutoDeliverPoll()
 
   if (loading) {
     return (
@@ -57,6 +60,7 @@ export function DashboardLayout() {
           </div>
         </main>
       </div>
+      <OrderTrackerFab />
     </div>
   )
 }

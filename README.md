@@ -48,6 +48,7 @@ Run SQL files in `supabase/` against your Supabase project (in order):
 6. `user-topup-migration.sql`
 7. `order-export-migration.sql`
 8. `order-retry-migration.sql`
+9. `order-auto-deliver-migration.sql`
 
 ## API
 

@@ -20,6 +20,8 @@ export function useOrders(limit?: number) {
   const [loading, setLoading] = useState(true)
 
   const refresh = useCallback(async () => {
+    await supabase.rpc('auto_deliver_pending_orders')
+
     const { data } = await supabase.from('orders').select('*').order('created_at', { ascending: false })
     setOrders((data as Order[]) ?? [])
     setLoading(false)

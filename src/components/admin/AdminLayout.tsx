@@ -13,6 +13,7 @@ import {
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useState } from 'react'
 import { useAuth } from '../../context/AuthContext'
+import { useAutoDeliverPoll } from '../../hooks/useAutoDeliverPoll'
 import { ADMIN_NAV_ITEMS, ADMIN_PAGE_TITLES } from '../../lib/adminConstants'
 
 const ICONS = {
@@ -130,6 +131,7 @@ export function AdminLayout() {
   const navigate = useNavigate()
   const { pathname } = useLocation()
   const [menuOpen, setMenuOpen] = useState(false)
+  useAutoDeliverPoll()
 
   const handleSignOut = async () => {
     await signOut()

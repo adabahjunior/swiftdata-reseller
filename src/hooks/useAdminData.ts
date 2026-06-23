@@ -40,6 +40,8 @@ export function useAdminOrders() {
   const [loading, setLoading] = useState(true)
 
   const refresh = useCallback(async () => {
+    await supabase.rpc('auto_deliver_pending_orders')
+
     const { data: ordersData } = await supabase
       .from('orders')
       .select('*')

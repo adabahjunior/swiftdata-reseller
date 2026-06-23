@@ -48,6 +48,24 @@ export default function AdminSiteSettingsPage() {
   const renderInput = (setting: { key: string; value: string; label: string | null }) => {
     const value = getValue(setting.key, setting.value)
 
+    if (setting.key === 'order_auto_deliver_seconds') {
+      return (
+        <div className="space-y-1">
+          <input
+            type="number"
+            min={0}
+            step={1}
+            value={value}
+            onChange={(e) => setDraft({ ...draft, [setting.key]: e.target.value })}
+            className="w-full h-10 rounded-lg border border-white/10 bg-secondary/50 px-3 text-sm outline-none"
+          />
+          <p className="text-[11px] text-muted-foreground">
+            Seconds after order creation to auto-mark as delivered. Set 0 to disable (instant deliver on API).
+          </p>
+        </div>
+      )
+    }
+
     if (setting.key === 'maintenance_mode' || setting.key === 'api_enabled') {
       return (
         <select
@@ -128,6 +146,7 @@ export default function AdminSiteSettingsPage() {
           {[
             ['maintenance_mode', 'Blocks API access when true'],
             ['api_enabled', 'Master switch for the API'],
+            ['order_auto_deliver_seconds', 'Auto-deliver pending orders after N seconds'],
             ['min_topup_amount', 'Minimum wallet top-up in GHS'],
             ['platform_notice', 'Banner shown to users on login'],
           ].map(([key, desc]) => (
