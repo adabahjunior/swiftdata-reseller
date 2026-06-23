@@ -34,10 +34,7 @@ App runs at `http://localhost:5173`.
 
 ### Supabase auth redirect URLs
 
-In Supabase → Authentication → URL Configuration, add your Vercel URL:
-
-- Site URL: `https://your-app.vercel.app`
-- Redirect URLs: `https://your-app.vercel.app/**`
+In Supabase → Authentication → URL Configuration, add your Vercel production URL and `http://localhost:5173/**` for local dev.
 
 ## Database migrations
 
@@ -50,6 +47,7 @@ Run SQL files in `supabase/` against your Supabase project (in order):
 5. `remove-yellow.sql`
 6. `user-topup-migration.sql`
 7. `order-export-migration.sql`
+8. `order-retry-migration.sql`
 
 ## API
 

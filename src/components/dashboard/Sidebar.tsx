@@ -54,7 +54,7 @@ export function Sidebar({ open, onClose, onSignOut }: SidebarProps) {
       )}
 
       <aside
-        className={`fixed md:static inset-y-0 left-0 z-50 w-72 flex flex-col border-r border-white/10 bg-[#08080c] transition-transform duration-300 ${
+        className={`fixed inset-y-0 left-0 z-50 w-72 h-screen flex flex-col border-r border-white/10 bg-[#08080c] transition-transform duration-300 ${
           open ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
         }`}
       >
@@ -142,7 +142,7 @@ export function DashboardHeader({
   balance: number
 }) {
   return (
-    <header className="h-16 flex items-center justify-between gap-3 px-4 md:px-6 border-b border-white/10 bg-black/40 backdrop-blur-xl sticky top-0 z-30">
+    <header className="h-16 shrink-0 flex items-center justify-between gap-3 px-4 md:px-6 border-b border-white/10 bg-black/40 backdrop-blur-xl z-30">
       <div className="flex items-center gap-3 min-w-0">
         <button
           type="button"

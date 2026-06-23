@@ -52,6 +52,7 @@ export interface Order {
   created_at: string
   completed_at: string | null
   export_download_id: string | null
+  admin_visible: boolean
 }
 
 export interface Transaction {

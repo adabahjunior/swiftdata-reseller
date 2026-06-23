@@ -52,7 +52,7 @@ function AdminSidebar({
       )}
 
       <aside
-        className={`fixed md:static inset-y-0 left-0 z-50 w-72 flex flex-col border-r border-red-500/20 bg-[#0a0808] transition-transform duration-300 ${
+        className={`fixed inset-y-0 left-0 z-50 w-72 h-screen flex flex-col border-r border-red-500/20 bg-[#0a0808] transition-transform duration-300 ${
           open ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
         }`}
       >
@@ -139,11 +139,11 @@ export function AdminLayout() {
   const title = ADMIN_PAGE_TITLES[pathname] ?? 'Admin'
 
   return (
-    <div className="min-h-screen flex w-full bg-[#050508]">
+    <div className="min-h-screen h-screen flex w-full bg-[#050508] overflow-hidden">
       <AdminSidebar open={menuOpen} onClose={() => setMenuOpen(false)} onSignOut={handleSignOut} />
 
-      <div className="flex-1 flex flex-col min-w-0">
-        <header className="h-16 flex items-center justify-between gap-3 px-4 md:px-6 border-b border-red-500/10 bg-black/40 backdrop-blur-xl sticky top-0 z-30">
+      <div className="flex-1 flex flex-col min-w-0 md:ml-72 h-screen">
+        <header className="h-16 shrink-0 flex items-center justify-between gap-3 px-4 md:px-6 border-b border-red-500/10 bg-black/40 backdrop-blur-xl z-30">
           <div className="flex items-center gap-3 min-w-0">
             <button
               type="button"
@@ -164,7 +164,7 @@ export function AdminLayout() {
           </div>
         </header>
 
-        <main className="flex-1 p-4 md:p-6 lg:p-8 overflow-auto">
+        <main className="flex-1 overflow-y-auto p-4 md:p-6 lg:p-8">
           <div className="max-w-7xl mx-auto">
             <Outlet />
           </div>

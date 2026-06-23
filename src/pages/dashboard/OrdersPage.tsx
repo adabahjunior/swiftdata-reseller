@@ -1,13 +1,20 @@
+import { RefreshCw } from 'lucide-react'
 import { useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { EmptyState, PageHeader, Panel, StatusBadge } from '../../components/dashboard/ui'
+import { useAuth } from '../../context/AuthContext'
 import { useOrders } from '../../hooks/useDashboardData'
 import { PACKAGE_NETWORKS } from '../../lib/constants'
 import { formatCurrency, formatDate, formatNetwork } from '../../lib/format'
+import { supabase } from '../../lib/supabase'
 
 export default function OrdersPage() {
-  const { orders, loading } = useOrders()
+  const { user, refreshProfile } = useAuth()
+  const { orders, loading, refresh } = useOrders()
   const [statusFilter, setStatusFilter] = useState<string>('all')
   const [networkFilter, setNetworkFilter] = useState<string>('all')
+  const [retryingId, setRetryingId] = useState<string | null>(null)
+  const [message, setMessage] = useState<string | null>(null)
 
   const filtered = useMemo(() => {
     return orders.filter((order) => {
@@ -17,12 +24,39 @@ export default function OrdersPage() {
     })
   }, [orders, statusFilter, networkFilter])
 
+  const retryOrder = async (orderId: string) => {
+    if (!user) return
+    setRetryingId(orderId)
+    setMessage(null)
+
+    const { data, error } = await supabase.rpc('retry_failed_order', {
+      p_user_id: user.id,
+      p_order_id: orderId,
+    })
+
+    setRetryingId(null)
+
+    if (error || !data?.success) {
+      setMessage(error?.message ?? data?.error ?? 'Retry failed')
+      return
+    }
+
+    setMessage('Order completed successfully and sent for processing.')
+    await Promise.all([refresh(), refreshProfile()])
+  }
+
   return (
     <div className="space-y-6 md:space-y-8">
       <PageHeader
         title="All Orders"
-        description="Every data purchase made through your API keys. New orders appear automatically."
+        description="Every data purchase made through your API keys. Failed orders can be retried after topping up."
       />
+
+      {message && (
+        <p className="text-sm rounded-lg border border-primary/30 bg-primary/5 text-primary px-4 py-2">
+          {message}
+        </p>
+      )}
 
       <Panel title="Order History" description={`${filtered.length} order(s)`}>
         <div className="flex flex-wrap gap-3 mb-6">
@@ -70,6 +104,7 @@ export default function OrdersPage() {
                   <th className="px-5 md:px-6 py-3 font-medium">Amount</th>
                   <th className="px-5 md:px-6 py-3 font-medium">Status</th>
                   <th className="px-5 md:px-6 py-3 font-medium">Date</th>
+                  <th className="px-5 md:px-6 py-3 font-medium">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/10">
@@ -82,9 +117,35 @@ export default function OrdersPage() {
                     <td className="px-5 md:px-6 py-3 font-bold">{formatCurrency(Number(order.amount))}</td>
                     <td className="px-5 md:px-6 py-3">
                       <StatusBadge status={order.status} />
+                      {order.status === 'failed' && order.failure_reason === 'insufficient_balance' && (
+                        <p className="text-[10px] text-muted-foreground mt-1">Insufficient balance</p>
+                      )}
                     </td>
                     <td className="px-5 md:px-6 py-3 text-muted-foreground whitespace-nowrap">
                       {formatDate(order.created_at)}
+                    </td>
+                    <td className="px-5 md:px-6 py-3">
+                      {order.status === 'failed' ? (
+                        <div className="flex flex-col gap-1">
+                          <button
+                            type="button"
+                            disabled={retryingId === order.id}
+                            onClick={() => void retryOrder(order.id)}
+                            className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-primary/30 bg-primary/10 text-xs font-bold text-primary hover:bg-primary/20 disabled:opacity-50"
+                          >
+                            <RefreshCw className={`h-3.5 w-3.5 ${retryingId === order.id ? 'animate-spin' : ''}`} />
+                            Retry
+                          </button>
+                          <Link
+                            to="/dashboard/balance"
+                            className="text-[10px] text-muted-foreground hover:text-primary underline"
+                          >
+                            Top up balance
+                          </Link>
+                        </div>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">—</span>
+                      )}
                     </td>
                   </tr>
                 ))}
