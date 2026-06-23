@@ -1,25 +1,40 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import type { ApiKey, ApiLog, DataPackage, Order, Transaction } from '../types/database'
+
+function subscribeOrders(onChange: () => void) {
+  const channel = supabase
+    .channel('orders-changes')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => {
+      onChange()
+    })
+    .subscribe()
+
+  return () => {
+    void supabase.removeChannel(channel)
+  }
+}
 
 export function useOrders(limit?: number) {
   const [orders, setOrders] = useState<Order[]>([])
   const [loading, setLoading] = useState(true)
 
-  useEffect(() => {
-    let query = supabase.from('orders').select('*').order('created_at', { ascending: false })
-    if (limit) query = query.limit(limit)
-
-    query.then(({ data }) => {
-      setOrders((data as Order[]) ?? [])
-      setLoading(false)
-    })
-  }, [limit])
-
-  return { orders, loading, refresh: async () => {
+  const refresh = useCallback(async () => {
     const { data } = await supabase.from('orders').select('*').order('created_at', { ascending: false })
     setOrders((data as Order[]) ?? [])
-  }}
+    setLoading(false)
+  }, [])
+
+  useEffect(() => {
+    void refresh()
+    return subscribeOrders(() => {
+      void refresh()
+    })
+  }, [refresh])
+
+  const displayed = limit ? orders.slice(0, limit) : orders
+
+  return { orders: displayed, allOrders: orders, loading, refresh }
 }
 
 export function usePackages() {

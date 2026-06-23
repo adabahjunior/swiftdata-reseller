@@ -8,14 +8,14 @@ import { formatCurrency, formatDate, formatNetwork } from '../../lib/format'
 
 export default function OverviewPage() {
   const { user } = useAuth()
-  const { orders, loading: ordersLoading } = useOrders(5)
+  const { orders, allOrders, loading: ordersLoading } = useOrders(5)
   const { keys } = useApiKeys()
   const { logs } = useApiLogs(100)
 
   const firstName = user?.full_name.split(' ')[0]
-  const completedOrders = orders.filter((o) => o.status === 'completed').length
+  const completedOrders = allOrders.filter((o) => o.status === 'completed').length
   const successRate =
-    orders.length > 0 ? Math.round((completedOrders / orders.length) * 100) : 100
+    allOrders.length > 0 ? Math.round((completedOrders / allOrders.length) * 100) : 100
   const avgResponse =
     logs.length > 0
       ? Math.round(logs.reduce((sum, log) => sum + log.response_time_ms, 0) / logs.length)
@@ -55,7 +55,7 @@ export default function OverviewPage() {
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
         <StatCard label="API Balance" value={formatCurrency(user?.wallet_balance ?? 0)} accent />
-        <StatCard label="Total Orders" value={String(orders.length)} sub="Via API" />
+        <StatCard label="Total Orders" value={String(allOrders.length)} sub="Via API" />
         <StatCard label="Success Rate" value={`${successRate}%`} sub={`${completedOrders} completed`} />
         <StatCard label="Active API Keys" value={String(activeKeys)} />
       </div>

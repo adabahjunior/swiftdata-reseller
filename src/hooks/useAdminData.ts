@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
-import type { ApiKey, Notification, Order, Profile, SiteSetting, Transaction } from '../types/database'
+import type { ApiKey, Notification, Order, OrderExportDownload, Profile, SiteSetting, Transaction } from '../types/database'
 
 export function useAdminStats() {
   const [stats, setStats] = useState({
@@ -39,7 +39,7 @@ export function useAdminOrders() {
   const [orders, setOrders] = useState<(Order & { profile?: Profile })[]>([])
   const [loading, setLoading] = useState(true)
 
-  const refresh = async () => {
+  const refresh = useCallback(async () => {
     const { data: ordersData } = await supabase
       .from('orders')
       .select('*')
@@ -56,13 +56,53 @@ export function useAdminOrders() {
       })),
     )
     setLoading(false)
-  }
+  }, [])
 
   useEffect(() => {
     void refresh()
-  }, [])
+
+    const channel = supabase
+      .channel('admin-orders-changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => {
+        void refresh()
+      })
+      .subscribe()
+
+    return () => {
+      void supabase.removeChannel(channel)
+    }
+  }, [refresh])
 
   return { orders, loading, refresh }
+}
+
+export function useAdminOrderExports() {
+  const [exports, setExports] = useState<OrderExportDownload[]>([])
+  const [pendingCount, setPendingCount] = useState(0)
+  const [loading, setLoading] = useState(true)
+
+  const refresh = useCallback(async () => {
+    const [exportsRes, pendingRes] = await Promise.all([
+      supabase
+        .from('order_export_downloads')
+        .select('*')
+        .order('created_at', { ascending: false }),
+      supabase
+        .from('orders')
+        .select('id', { count: 'exact', head: true })
+        .is('export_download_id', null),
+    ])
+
+    setExports((exportsRes.data as OrderExportDownload[]) ?? [])
+    setPendingCount(pendingRes.count ?? 0)
+    setLoading(false)
+  }, [])
+
+  useEffect(() => {
+    void refresh()
+  }, [refresh])
+
+  return { exports, pendingCount, loading, refresh }
 }
 
 export function useAdminUsers() {

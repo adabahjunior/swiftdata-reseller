@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { EmptyState, PageHeader, Panel, StatusBadge } from '../../components/dashboard/ui'
+import AdminOrderExportsPanel from '../../components/admin/AdminOrderExportsPanel'
 import { useAdminOrders } from '../../hooks/useAdminData'
 import { supabase } from '../../lib/supabase'
 import { formatCurrency, formatDate, formatNetwork } from '../../lib/format'
@@ -29,8 +30,10 @@ export default function AdminOrdersPage() {
     <div className="space-y-6 md:space-y-8">
       <PageHeader
         title="Orders"
-        description="Manage all API orders across the platform."
+        description="All API orders across users — updates live. Export batches of up to 50 orders to Excel."
       />
+
+      <AdminOrderExportsPanel />
 
       <Panel title="All Orders" description={`${filtered.length} order(s)`}>
         <div className="mb-4">
@@ -63,6 +66,7 @@ export default function AdminOrdersPage() {
                   <th className="px-5 md:px-6 py-3 font-medium">Network</th>
                   <th className="px-5 md:px-6 py-3 font-medium">Amount</th>
                   <th className="px-5 md:px-6 py-3 font-medium">Status</th>
+                  <th className="px-5 md:px-6 py-3 font-medium">Exported</th>
                   <th className="px-5 md:px-6 py-3 font-medium">Date</th>
                   <th className="px-5 md:px-6 py-3 font-medium">Actions</th>
                 </tr>
@@ -84,6 +88,13 @@ export default function AdminOrdersPage() {
                     <td className="px-5 md:px-6 py-3 font-bold">{formatCurrency(Number(order.amount))}</td>
                     <td className="px-5 md:px-6 py-3">
                       <StatusBadge status={order.status} />
+                    </td>
+                    <td className="px-5 md:px-6 py-3">
+                      {order.export_download_id ? (
+                        <span className="text-xs text-emerald-400">Yes</span>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">No</span>
+                      )}
                     </td>
                     <td className="px-5 md:px-6 py-3 text-muted-foreground whitespace-nowrap text-xs">
                       {formatDate(order.created_at)}

@@ -21,7 +21,7 @@ export default function OrdersPage() {
     <div className="space-y-6 md:space-y-8">
       <PageHeader
         title="All Orders"
-        description="Every data purchase made through your API keys. Poll order status until completed."
+        description="Every data purchase made through your API keys. New orders appear automatically."
       />
 
       <Panel title="Order History" description={`${filtered.length} order(s)`}>

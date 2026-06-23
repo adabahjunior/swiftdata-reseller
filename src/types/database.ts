@@ -51,6 +51,7 @@ export interface Order {
   failure_reason: string | null
   created_at: string
   completed_at: string | null
+  export_download_id: string | null
 }
 
 export interface Transaction {
@@ -92,6 +93,19 @@ export interface Notification {
   created_by: string | null
   created_at: string
   expires_at: string | null
+}
+
+export interface OrderExportDownload {
+  id: string
+  order_ids: string[]
+  order_count: number
+  first_order_at: string | null
+  last_order_at: string | null
+  downloaded_at: string
+  downloaded_by: string | null
+  download_count: number
+  file_label: string
+  created_at: string
 }
 
 export interface Database {
