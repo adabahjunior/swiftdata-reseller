@@ -8,6 +8,7 @@ import { DashboardHeader, Sidebar } from './Sidebar'
 const PAGE_TITLES: Record<string, string> = {
   '/dashboard': 'Overview',
   '/dashboard/balance': 'My API Balance',
+  '/dashboard/place-order': 'Place Order',
   '/dashboard/orders': 'All Orders',
   '/dashboard/packages': 'Data Packages',
   '/dashboard/health': 'API Health',

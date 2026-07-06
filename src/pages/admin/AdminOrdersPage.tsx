@@ -225,6 +225,7 @@ export default function AdminOrdersPage() {
                   <th className="px-5 md:px-6 py-3 font-medium">Phone</th>
                   <th className="px-5 md:px-6 py-3 font-medium">Network</th>
                   <th className="px-5 md:px-6 py-3 font-medium">Amount</th>
+                  <th className="px-5 md:px-6 py-3 font-medium">Source</th>
                   <th className="px-5 md:px-6 py-3 font-medium">Status</th>
                   <th className="px-5 md:px-6 py-3 font-medium">Exported</th>
                   <th className="px-5 md:px-6 py-3 font-medium">Date</th>
@@ -258,6 +259,17 @@ export default function AdminOrdersPage() {
                     <td className="px-5 md:px-6 py-3">{order.phone}</td>
                     <td className="px-5 md:px-6 py-3">{formatNetwork(order.network)}</td>
                     <td className="px-5 md:px-6 py-3 font-bold">{formatCurrency(Number(order.amount))}</td>
+                    <td className="px-5 md:px-6 py-3">
+                      <span
+                        className={`text-xs font-medium px-2 py-0.5 rounded-full border ${
+                          order.order_source === 'dashboard'
+                            ? 'border-primary/30 bg-primary/10 text-primary'
+                            : 'border-white/10 bg-white/5 text-muted-foreground'
+                        }`}
+                      >
+                        {order.order_source === 'dashboard' ? 'Dashboard' : 'API'}
+                      </span>
+                    </td>
                     <td className="px-5 md:px-6 py-3">
                       <StatusBadge status={order.status} />
                     </td>

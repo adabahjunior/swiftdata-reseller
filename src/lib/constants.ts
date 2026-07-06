@@ -76,6 +76,7 @@ export const ORDER_STATUS_STYLES: Record<string, string> = {
 export const NAV_ITEMS = [
   { label: 'Overview', to: '/dashboard', icon: 'LayoutDashboard' },
   { label: 'My API Balance', to: '/dashboard/balance', icon: 'Wallet' },
+  { label: 'Place Order', to: '/dashboard/place-order', icon: 'Send' },
   { label: 'All Orders', to: '/dashboard/orders', icon: 'ShoppingBag' },
   { label: 'Data Packages', to: '/dashboard/packages', icon: 'Package' },
   { label: 'API Health', to: '/dashboard/health', icon: 'Activity' },

@@ -1,4 +1,4 @@
-import { Activity, ArrowRight, CheckCircle2, Key, Package, Wallet } from 'lucide-react'
+import { Activity, ArrowRight, CheckCircle2, Key, Package, Send, Wallet } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { EmptyState, PageHeader, StatCard, StatusBadge } from '../../components/dashboard/ui'
 import { useAuth } from '../../context/AuthContext'
@@ -114,6 +114,7 @@ export default function OverviewPage() {
             <h3 className="font-display font-bold mb-3">Quick Links</h3>
             <div className="space-y-2">
               {[
+                { to: '/dashboard/place-order', icon: Send, label: 'Place Order' },
                 { to: '/dashboard/packages', icon: Package, label: 'Browse Packages' },
                 { to: '/dashboard/docs', icon: Activity, label: 'API Documentation' },
                 { to: '/dashboard/balance', icon: Wallet, label: 'Top Up Balance' },

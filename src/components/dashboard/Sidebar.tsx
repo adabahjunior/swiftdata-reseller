@@ -6,6 +6,7 @@ import {
   LogOut,
   Menu,
   Package,
+  Send,
   Settings,
   Shield,
   ShoppingBag,
@@ -19,6 +20,7 @@ import { useAuth } from '../../context/AuthContext'
 const ICONS = {
   LayoutDashboard,
   Wallet,
+  Send,
   ShoppingBag,
   Package,
   Activity,

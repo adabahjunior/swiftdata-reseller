@@ -7,6 +7,7 @@ import { AdminLayout } from './components/admin/AdminLayout'
 import AuthPage from './pages/AuthPage'
 import OverviewPage from './pages/dashboard/OverviewPage'
 import ApiBalancePage from './pages/dashboard/ApiBalancePage'
+import PlaceOrderPage from './pages/dashboard/PlaceOrderPage'
 import OrdersPage from './pages/dashboard/OrdersPage'
 import DataPackagesPage from './pages/dashboard/DataPackagesPage'
 import ApiHealthPage from './pages/dashboard/ApiHealthPage'
@@ -32,6 +33,7 @@ export default function App() {
             <Route path="/dashboard" element={<DashboardLayout />}>
               <Route index element={<OverviewPage />} />
               <Route path="balance" element={<ApiBalancePage />} />
+              <Route path="place-order" element={<PlaceOrderPage />} />
               <Route path="orders" element={<OrdersPage />} />
               <Route path="packages" element={<DataPackagesPage />} />
               <Route path="health" element={<ApiHealthPage />} />
