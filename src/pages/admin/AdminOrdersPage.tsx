@@ -274,6 +274,9 @@ export default function AdminOrdersPage() {
                     <td className="px-5 md:px-6 py-3">
                       {order.provider_submitted_at ? (
                         <div>
+                          {order.provider_name && (
+                            <p className="text-xs font-medium text-foreground/90 mb-1">{order.provider_name}</p>
+                          )}
                           <span
                             className={`text-xs font-medium px-2 py-0.5 rounded-full border ${
                               order.provider_status === 'submitted'

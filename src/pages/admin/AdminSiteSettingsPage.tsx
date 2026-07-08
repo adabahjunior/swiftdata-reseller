@@ -1,8 +1,17 @@
 import { useState } from 'react'
 import { EmptyState, PageHeader, Panel } from '../../components/dashboard/ui'
+import { PasswordInput } from '../../components/PasswordInput'
 import { useAuth } from '../../context/AuthContext'
 import { useSiteSettings } from '../../hooks/useAdminData'
 import { supabase } from '../../lib/supabase'
+
+const PROVIDER_SETTING_KEYS = new Set([
+  'active_data_provider',
+  'data_provider_primary_name',
+  'data_provider_secondary_name',
+  'data_provider_primary_api_key',
+  'data_provider_secondary_api_key',
+])
 
 export default function AdminSiteSettingsPage() {
   const { user } = useAuth()
@@ -11,8 +20,23 @@ export default function AdminSiteSettingsPage() {
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
 
-  const getValue = (key: string, fallback: string) =>
-    draft[key] !== undefined ? draft[key] : fallback
+  const getValue = (key: string, fallback = '') =>
+    draft[key] !== undefined ? draft[key] : (settings.find((s) => s.key === key)?.value ?? fallback)
+
+  const upsertSetting = async (key: string, value: string, label: string) => {
+    if (!user) return false
+    const { error } = await supabase.from('site_settings').upsert(
+      {
+        key,
+        value,
+        label,
+        updated_by: user.id,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: 'key' },
+    )
+    return !error
+  }
 
   const handleSave = async () => {
     if (!user) return
@@ -42,6 +66,40 @@ export default function AdminSiteSettingsPage() {
     setDraft({})
     setSaving(false)
     setMessage('Site settings saved successfully.')
+    await refresh()
+  }
+
+  const handleSaveProviders = async () => {
+    if (!user) return
+    setSaving(true)
+    setMessage(null)
+
+    const providerUpdates: Array<[string, string, string]> = [
+      ['active_data_provider', getValue('active_data_provider', 'primary'), 'Active data provider (primary or secondary)'],
+      ['data_provider_primary_name', getValue('data_provider_primary_name', 'Primary Datahub'), 'Display name for primary provider'],
+      ['data_provider_secondary_name', getValue('data_provider_secondary_name', 'Secondary Datahub'), 'Display name for secondary provider'],
+      ['data_provider_primary_api_key', getValue('data_provider_primary_api_key'), 'Primary Datahub API key'],
+      ['data_provider_secondary_api_key', getValue('data_provider_secondary_api_key'), 'Secondary Datahub API key'],
+    ]
+
+    for (const [key, value, label] of providerUpdates) {
+      const ok = await upsertSetting(key, value, label)
+      if (!ok) {
+        setSaving(false)
+        setMessage(`Failed to save ${key}`)
+        return
+      }
+    }
+
+    setDraft((prev) => {
+      const next = { ...prev }
+      for (const [key] of providerUpdates) {
+        delete next[key]
+      }
+      return next
+    })
+    setSaving(false)
+    setMessage('Data provider settings saved. New orders will use the active provider immediately.')
     await refresh()
   }
 
@@ -112,6 +170,11 @@ export default function AdminSiteSettingsPage() {
     )
   }
 
+  const generalSettings = settings.filter((s) => !PROVIDER_SETTING_KEYS.has(s.key))
+  const activeProvider = getValue('active_data_provider', 'primary')
+  const primaryName = getValue('data_provider_primary_name', 'Primary Datahub')
+  const secondaryName = getValue('data_provider_secondary_name', 'Secondary Datahub')
+
   return (
     <div className="space-y-6 md:space-y-8">
       <PageHeader
@@ -129,14 +192,114 @@ export default function AdminSiteSettingsPage() {
         }
       />
 
+      <Panel
+        title="Data Providers"
+        description="Switch between primary and secondary Datahub accounts. The active provider receives all new orders immediately."
+      >
+        {loading ? (
+          <p className="text-sm text-muted-foreground">Loading provider settings…</p>
+        ) : (
+          <div className="space-y-6 max-w-2xl">
+            <div>
+              <label className="text-sm font-medium text-foreground/80">Active provider</label>
+              <p className="text-[11px] text-muted-foreground mb-2">
+                All new order submissions go to the selected provider.
+              </p>
+              <div className="grid sm:grid-cols-2 gap-3">
+                {(['primary', 'secondary'] as const).map((slug) => {
+                  const name = slug === 'primary' ? primaryName : secondaryName
+                  const selected = activeProvider === slug
+                  return (
+                    <button
+                      key={slug}
+                      type="button"
+                      onClick={() => setDraft({ ...draft, active_data_provider: slug })}
+                      className={`rounded-xl border p-4 text-left transition-colors ${
+                        selected
+                          ? 'border-red-500/50 bg-red-500/10 ring-1 ring-red-500/30'
+                          : 'border-white/10 bg-secondary/30 hover:bg-secondary/50'
+                      }`}
+                    >
+                      <p className="text-xs uppercase tracking-wide text-muted-foreground">{slug}</p>
+                      <p className="font-semibold mt-1">{name}</p>
+                      {selected && (
+                        <p className="text-xs text-emerald-400 mt-2">Active — receiving new orders</p>
+                      )}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+
+            <div className="grid sm:grid-cols-2 gap-5">
+              <div className="space-y-4 rounded-xl border border-white/10 p-4">
+                <h3 className="text-sm font-semibold">Primary provider</h3>
+                <div>
+                  <label className="text-xs text-muted-foreground">Display name</label>
+                  <input
+                    value={primaryName}
+                    onChange={(e) => setDraft({ ...draft, data_provider_primary_name: e.target.value })}
+                    className="mt-1 w-full h-10 rounded-lg border border-white/10 bg-secondary/50 px-3 text-sm outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-muted-foreground">API key</label>
+                  <PasswordInput
+                    value={getValue('data_provider_primary_api_key')}
+                    onChange={(e) => setDraft({ ...draft, data_provider_primary_api_key: e.target.value })}
+                    placeholder="sk_..."
+                    className="mt-1 border-white/10 pl-3"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-4 rounded-xl border border-white/10 p-4">
+                <h3 className="text-sm font-semibold">Secondary provider</h3>
+                <div>
+                  <label className="text-xs text-muted-foreground">Display name</label>
+                  <input
+                    value={secondaryName}
+                    onChange={(e) => setDraft({ ...draft, data_provider_secondary_name: e.target.value })}
+                    className="mt-1 w-full h-10 rounded-lg border border-white/10 bg-secondary/50 px-3 text-sm outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-muted-foreground">API key</label>
+                  <PasswordInput
+                    value={getValue('data_provider_secondary_api_key')}
+                    onChange={(e) => setDraft({ ...draft, data_provider_secondary_api_key: e.target.value })}
+                    placeholder="sk_..."
+                    className="mt-1 border-white/10 pl-3"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => void handleSaveProviders()}
+              disabled={saving || loading}
+              className="h-10 px-5 rounded-lg bg-red-500 text-white text-sm font-bold disabled:opacity-60"
+            >
+              {saving ? 'Saving…' : 'Save Provider Settings'}
+            </button>
+            {message && (
+              <p className={`text-sm ${message.includes('success') || message.includes('immediately') ? 'text-emerald-400' : 'text-destructive'}`}>
+                {message}
+              </p>
+            )}
+          </div>
+        )}
+      </Panel>
+
       <Panel title="Platform Configuration">
         {loading ? (
           <p className="text-sm text-muted-foreground">Loading settings…</p>
-        ) : settings.length === 0 ? (
+        ) : generalSettings.length === 0 ? (
           <EmptyState title="No settings found" description="Run the admin schema migration in Supabase." />
         ) : (
           <div className="space-y-5 max-w-2xl">
-            {settings.map((setting) => (
+            {generalSettings.map((setting) => (
               <div key={setting.key}>
                 <label className="text-sm font-medium text-foreground/80">
                   {setting.label ?? setting.key}
@@ -146,7 +309,7 @@ export default function AdminSiteSettingsPage() {
               </div>
             ))}
             {message && (
-              <p className={`text-sm ${message.includes('success') ? 'text-emerald-400' : 'text-destructive'}`}>
+              <p className={`text-sm ${message.includes('success') || message.includes('immediately') ? 'text-emerald-400' : 'text-destructive'}`}>
                 {message}
               </p>
             )}
@@ -162,6 +325,9 @@ export default function AdminSiteSettingsPage() {
             ['order_auto_deliver_seconds', 'Auto-deliver pending orders after N seconds'],
             ['provider_fulfillment_enabled', 'Forward successful orders to Datahub provider'],
             ['provider_mtn_network_key', 'Datahub network key for MTN orders (YELLO or MTN_XPRESS)'],
+            ['active_data_provider', 'Active Datahub account (primary or secondary)'],
+            ['data_provider_primary_api_key', 'Primary Datahub API key (admin only)'],
+            ['data_provider_secondary_api_key', 'Secondary Datahub API key (admin only)'],
             ['min_topup_amount', 'Minimum wallet top-up in GHS'],
             ['platform_notice', 'Banner shown to users on login'],
           ].map(([key, desc]) => (

@@ -59,6 +59,7 @@ export interface Order {
   provider_status: string | null
   provider_error: string | null
   provider_submitted_at: string | null
+  provider_name: string | null
 }
 
 export interface Transaction {
