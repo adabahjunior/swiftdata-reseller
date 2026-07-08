@@ -226,6 +226,7 @@ export default function AdminOrdersPage() {
                   <th className="px-5 md:px-6 py-3 font-medium">Network</th>
                   <th className="px-5 md:px-6 py-3 font-medium">Amount</th>
                   <th className="px-5 md:px-6 py-3 font-medium">Source</th>
+                  <th className="px-5 md:px-6 py-3 font-medium">Provider</th>
                   <th className="px-5 md:px-6 py-3 font-medium">Status</th>
                   <th className="px-5 md:px-6 py-3 font-medium">Exported</th>
                   <th className="px-5 md:px-6 py-3 font-medium">Date</th>
@@ -269,6 +270,28 @@ export default function AdminOrdersPage() {
                       >
                         {order.order_source === 'dashboard' ? 'Dashboard' : 'API'}
                       </span>
+                    </td>
+                    <td className="px-5 md:px-6 py-3">
+                      {order.provider_submitted_at ? (
+                        <div>
+                          <span
+                            className={`text-xs font-medium px-2 py-0.5 rounded-full border ${
+                              order.provider_status === 'submitted'
+                                ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400'
+                                : 'border-red-500/30 bg-red-500/10 text-red-400'
+                            }`}
+                          >
+                            {order.provider_status ?? 'sent'}
+                          </span>
+                          {order.provider_error && (
+                            <p className="text-[10px] text-red-400 mt-1 max-w-[140px] truncate" title={order.provider_error}>
+                              {order.provider_error}
+                            </p>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">Pending</span>
+                      )}
                     </td>
                     <td className="px-5 md:px-6 py-3">
                       <StatusBadge status={order.status} />

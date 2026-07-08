@@ -66,7 +66,20 @@ export default function AdminSiteSettingsPage() {
       )
     }
 
-    if (setting.key === 'maintenance_mode' || setting.key === 'api_enabled') {
+    if (setting.key === 'provider_mtn_network_key') {
+      return (
+        <select
+          value={value}
+          onChange={(e) => setDraft({ ...draft, [setting.key]: e.target.value })}
+          className="w-full h-10 rounded-lg border border-white/10 bg-secondary/50 px-3 text-sm outline-none"
+        >
+          <option value="YELLO">YELLO (standard MTN)</option>
+          <option value="MTN_XPRESS">MTN_XPRESS (express)</option>
+        </select>
+      )
+    }
+
+    if (setting.key === 'maintenance_mode' || setting.key === 'api_enabled' || setting.key === 'provider_fulfillment_enabled') {
       return (
         <select
           value={value}
@@ -147,6 +160,8 @@ export default function AdminSiteSettingsPage() {
             ['maintenance_mode', 'Blocks API access when true'],
             ['api_enabled', 'Master switch for the API'],
             ['order_auto_deliver_seconds', 'Auto-deliver pending orders after N seconds'],
+            ['provider_fulfillment_enabled', 'Forward successful orders to Datahub provider'],
+            ['provider_mtn_network_key', 'Datahub network key for MTN orders (YELLO or MTN_XPRESS)'],
             ['min_topup_amount', 'Minimum wallet top-up in GHS'],
             ['platform_notice', 'Banner shown to users on login'],
           ].map(([key, desc]) => (

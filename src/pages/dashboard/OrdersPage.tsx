@@ -6,6 +6,7 @@ import { useAuth } from '../../context/AuthContext'
 import { useOrders } from '../../hooks/useDashboardData'
 import { PACKAGE_NETWORKS } from '../../lib/constants'
 import { formatCurrency, formatDate, formatNetwork } from '../../lib/format'
+import { triggerOrderFulfillment, triggerProviderFulfillment } from '../../lib/providerFulfillment'
 import { supabase } from '../../lib/supabase'
 
 export default function OrdersPage() {
@@ -42,6 +43,8 @@ export default function OrdersPage() {
     }
 
     setMessage('Order completed successfully and sent for processing.')
+    if (data.order?.id) void triggerOrderFulfillment(data.order.id)
+    triggerProviderFulfillment()
     await Promise.all([refresh(), refreshProfile()])
   }
 

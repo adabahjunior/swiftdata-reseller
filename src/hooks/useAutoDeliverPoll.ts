@@ -1,4 +1,5 @@
 import { useEffect } from 'react'
+import { triggerProviderFulfillment } from '../lib/providerFulfillment'
 import { supabase } from '../lib/supabase'
 
 const POLL_MS = 15_000
@@ -10,6 +11,7 @@ export function useAutoDeliverPoll(enabled = true) {
 
     const run = () => {
       void supabase.rpc('auto_deliver_pending_orders')
+      triggerProviderFulfillment()
     }
 
     run()

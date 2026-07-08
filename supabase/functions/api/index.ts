@@ -59,6 +59,20 @@ function json(data: unknown, status = 200) {
   })
 }
 
+function triggerProviderFulfillment(orderId?: string) {
+  const base = Deno.env.get('SUPABASE_URL')
+  const key = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
+  if (!base || !key) return
+
+  const path = orderId ? `/order/${orderId}` : '/process'
+  void fetch(`${base}/functions/v1/fulfill-orders${path}`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${key}` },
+  }).catch(() => {
+    /* background */
+  })
+}
+
 function error(message: string, status = 400) {
   return json({ success: false, error: message }, status)
 }
@@ -165,6 +179,9 @@ Deno.serve(async (req) => {
             success: true,
             order: mapOrderToApi(result.order as Record<string, unknown>),
           }
+          const orderId = (result.order as Record<string, unknown>)?.id
+          if (orderId) triggerProviderFulfillment(String(orderId))
+          else triggerProviderFulfillment()
         }
       }
     } else if (path === '/v1/orders' && req.method === 'GET') {

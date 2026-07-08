@@ -6,6 +6,7 @@ import { useAuth } from '../../context/AuthContext'
 import { usePackages } from '../../hooks/useDashboardData'
 import { PACKAGE_NETWORKS, apiNetworkToDb } from '../../lib/constants'
 import { formatCurrency } from '../../lib/format'
+import { triggerOrderFulfillment, triggerProviderFulfillment } from '../../lib/providerFulfillment'
 import { supabase } from '../../lib/supabase'
 
 type Tab = 'single' | 'bulk'
@@ -101,6 +102,8 @@ export default function PlaceOrderPage() {
 
     setMessage(`Order placed — ${data.order.reference} (${data.order.status})`)
     setPhone('')
+    if (data.order?.id) void triggerOrderFulfillment(data.order.id)
+    triggerProviderFulfillment()
     await refreshProfile()
   }
 
@@ -134,6 +137,7 @@ export default function PlaceOrderPage() {
       `Bulk complete — ${data.succeeded} succeeded, ${data.failed} failed. Successful orders are on the admin dashboard.`,
     )
     if (data.failed === 0) setBulkText('')
+    triggerProviderFulfillment()
     await refreshProfile()
   }
 

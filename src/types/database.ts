@@ -54,6 +54,11 @@ export interface Order {
   export_download_id: string | null
   admin_visible: boolean
   order_source: 'api' | 'dashboard'
+  provider_reference: string | null
+  provider_order_number: string | null
+  provider_status: string | null
+  provider_error: string | null
+  provider_submitted_at: string | null
 }
 
 export interface Transaction {
