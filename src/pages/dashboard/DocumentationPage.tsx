@@ -1,136 +1,78 @@
+import { Check, Copy, Download } from 'lucide-react'
+import { useState } from 'react'
+import { PageHeader } from '../../components/dashboard/ui'
+import {
+  DOC_ENDPOINTS,
+  DOC_ERROR_CODES,
+  buildApiDocsText,
+  downloadApiDocsPdf,
+} from '../../lib/apiDocumentation'
 import { API_BASE_URL, API_NETWORKS } from '../../lib/constants'
 
-const ENDPOINTS = [
-  {
-    method: 'GET',
-    path: '/v1/health',
-    title: 'Health Check',
-    description: 'Returns API status and supported network IDs. No balance required.',
-    response: `{
-  "success": true,
-  "status": "operational",
-  "timestamp": "2026-06-23T12:00:00.000Z",
-  "networks": ["yello", "at_ishare", "at_bigtime", "telecel"]
-}`,
-  },
-  {
-    method: 'GET',
-    path: '/v1/balance',
-    title: 'Get Balance',
-    description: 'Returns your current API wallet balance in GHS.',
-    response: `{
-  "success": true,
-  "balance": 150.00,
-  "currency": "GHS"
-}`,
-  },
-  {
-    method: 'GET',
-    path: '/v1/packages',
-    title: 'List Packages',
-    description: 'Returns all active data packages with network IDs and labels.',
-    response: `{
-  "success": true,
-  "networks": [
-    { "id": "yello", "label": "Yello" },
-    { "id": "at_ishare", "label": "AirtelTigo iShare" },
-    { "id": "at_bigtime", "label": "AirtelTigo Bigtime" },
-    { "id": "telecel", "label": "Telecel" }
-  ],
-  "packages": [
-    {
-      "network": "yello",
-      "network_label": "Yello",
-      "size_gb": 1,
-      "price": 4.50,
-      "validity": "Non expiry"
-    }
-  ]
-}`,
-  },
-  {
-    method: 'POST',
-    path: '/v1/buy-data',
-    title: 'Buy Data',
-    description:
-      'Purchase a data bundle for a Ghana phone number. Deducts from your API balance instantly.',
-    body: `{
-  "phone": "0241234567",
-  "network": "yello",
-  "size_gb": 1,
-  "reference": "optional-custom-ref"
-}`,
-    response: `{
-  "success": true,
-  "order": {
-    "reference": "ORD-ABC123XYZ",
-    "phone": "0241234567",
-    "network": "yello",
-    "network_label": "Yello",
-    "size_gb": 1,
-    "amount": 4.50,
-    "status": "completed"
-  }
-}`,
-  },
-  {
-    method: 'GET',
-    path: '/v1/orders',
-    title: 'List Orders',
-    description: 'Returns your API orders. Supports ?limit=50&offset=0 query params.',
-    response: `{
-  "success": true,
-  "orders": [
-    {
-      "reference": "ORD-ABC123",
-      "phone": "0241234567",
-      "network": "at_ishare",
-      "network_label": "AirtelTigo iShare",
-      "size_gb": 2,
-      "amount": 7.50,
-      "status": "completed",
-      "created_at": "2026-06-23T12:00:00.000Z"
-    }
-  ]
-}`,
-  },
-  {
-    method: 'GET',
-    path: '/v1/orders/{reference}',
-    title: 'Get Order',
-    description: 'Get a single order by its reference. Poll until status is completed or failed.',
-    response: `{
-  "success": true,
-  "order": {
-    "reference": "ORD-ABC123",
-    "phone": "0241234567",
-    "network": "telecel",
-    "network_label": "Telecel",
-    "size_gb": 1,
-    "amount": 4.20,
-    "status": "completed"
-  }
-}`,
-  },
-]
-
-const ERROR_CODES = [
-  { code: 401, meaning: 'Missing or invalid API key' },
-  { code: 400, meaning: 'Bad request — invalid phone, missing network/size_gb, insufficient balance' },
-  { code: 404, meaning: 'Order or endpoint not found' },
-  { code: 500, meaning: 'Internal server error' },
-]
-
 export default function DocumentationPage() {
+  const [copied, setCopied] = useState(false)
+  const [downloading, setDownloading] = useState(false)
+  const [actionError, setActionError] = useState<string | null>(null)
+
+  const copyDocs = async () => {
+    setActionError(null)
+    try {
+      await navigator.clipboard.writeText(buildApiDocsText())
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2500)
+    } catch {
+      setActionError('Could not copy to clipboard. Try downloading the PDF instead.')
+    }
+  }
+
+  const downloadPdf = async () => {
+    setDownloading(true)
+    setActionError(null)
+    try {
+      await downloadApiDocsPdf()
+    } catch {
+      setActionError('Could not generate PDF. Please try again.')
+    } finally {
+      setDownloading(false)
+    }
+  }
+
   return (
     <div className="space-y-6 md:space-y-8">
-      <div>
-        <h1 className="font-display font-bold text-2xl md:text-3xl">API Documentation</h1>
-        <p className="text-muted-foreground mt-1 text-sm md:text-base">
-          SwiftData Reseller REST API — purchase data bundles programmatically across all Ghana
-          networks.
+      <PageHeader
+        title="API Documentation"
+        description="SwiftData Reseller REST API — purchase data bundles programmatically across all Ghana networks."
+        action={
+          <div className="flex flex-wrap gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => void copyDocs()}
+              className="inline-flex items-center gap-2 h-10 px-4 rounded-lg border border-white/10 bg-secondary/50 text-sm font-bold hover:bg-secondary transition-colors"
+            >
+              {copied ? <Check className="h-4 w-4 text-emerald-400" /> : <Copy className="h-4 w-4" />}
+              {copied ? 'Copied' : 'Copy docs'}
+            </button>
+            <button
+              type="button"
+              onClick={() => void downloadPdf()}
+              disabled={downloading}
+              className="inline-flex items-center gap-2 h-10 px-4 rounded-lg bg-primary text-primary-foreground text-sm font-bold disabled:opacity-60"
+            >
+              <Download className="h-4 w-4" />
+              {downloading ? 'Preparing…' : 'Download PDF'}
+            </button>
+          </div>
+        }
+      />
+
+      {actionError && (
+        <p className="text-sm text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-4 py-2">
+          {actionError}
         </p>
-      </div>
+      )}
+      {copied && !actionError && (
+        <p className="text-sm text-emerald-400">Full API documentation copied to clipboard.</p>
+      )}
 
       <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-5 md:p-6 space-y-4">
         <h2 className="font-display font-bold text-lg">Base URL</h2>
@@ -186,8 +128,13 @@ Content-Type: application/json`}
       <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-5 md:p-6 space-y-4">
         <h2 className="font-display font-bold text-lg">Quick Start</h2>
         <ol className="list-decimal list-inside space-y-2 text-sm text-muted-foreground">
-          <li>Top up via MoMo — see <strong>My API Balance</strong> for instructions and your 5-digit code</li>
-          <li>Generate an API key from <strong>My API</strong></li>
+          <li>
+            Top up via MoMo — see <strong>My API Balance</strong> for instructions and your 5-digit
+            code
+          </li>
+          <li>
+            Generate an API key from <strong>My API</strong>
+          </li>
           <li>
             <code className="text-xs bg-secondary px-1 rounded">GET /v1/packages</code> — list
             available network + size_gb bundles
@@ -205,7 +152,7 @@ Content-Type: application/json`}
 
       <div className="space-y-4">
         <h2 className="font-display font-bold text-lg">Endpoints</h2>
-        {ENDPOINTS.map((ep) => (
+        {DOC_ENDPOINTS.map((ep) => (
           <div
             key={ep.path + ep.method}
             className="rounded-2xl border border-white/10 bg-white/[0.03] overflow-hidden"
@@ -220,14 +167,17 @@ Content-Type: application/json`}
               >
                 {ep.method}
               </span>
-              <code className="text-sm font-mono">{API_BASE_URL}{ep.path}</code>
+              <code className="text-sm font-mono">
+                {API_BASE_URL}
+                {ep.path}
+              </code>
             </div>
             <div className="p-5 space-y-3">
               <div>
                 <h3 className="font-bold">{ep.title}</h3>
                 <p className="text-sm text-muted-foreground mt-1">{ep.description}</p>
               </div>
-              {'body' in ep && ep.body && (
+              {ep.body && (
                 <div>
                   <p className="text-xs font-medium text-muted-foreground mb-1.5">Request Body</p>
                   <pre className="text-xs font-mono bg-black/40 border border-white/10 rounded-xl p-4 overflow-x-auto text-muted-foreground">
@@ -249,7 +199,7 @@ Content-Type: application/json`}
       <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-5 md:p-6 space-y-3">
         <h2 className="font-display font-bold text-lg">Error Codes</h2>
         <div className="space-y-2">
-          {ERROR_CODES.map((e) => (
+          {DOC_ERROR_CODES.map((e) => (
             <div key={e.code} className="flex gap-3 text-sm">
               <span className="font-mono font-bold text-red-400 w-10">{e.code}</span>
               <span className="text-muted-foreground">{e.meaning}</span>
