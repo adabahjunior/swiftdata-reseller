@@ -30,7 +30,7 @@ export type NumberCheckResponse = {
   results?: NumberCheckResult[]
 }
 
-/** Check one or more phones against Datahub beneficiary list. */
+/** Check one or more phones against the provider beneficiary list. */
 export async function checkNumbers(phones: string[], userJwt?: string | null): Promise<NumberCheckResponse> {
   const headers = authHeaders()
   if (userJwt) headers.Authorization = `Bearer ${userJwt}`

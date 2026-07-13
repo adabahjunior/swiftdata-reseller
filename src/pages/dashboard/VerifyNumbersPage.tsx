@@ -79,8 +79,7 @@ export default function VerifyNumbersPage() {
       }
       setResults(data.results ?? [])
       setMessage(
-        `Checked ${data.checked} — ${data.verified} verified, ${data.unverified} not verified` +
-          (data.provider_name ? ` via ${data.provider_name}` : ''),
+        `Checked ${data.checked} — ${data.verified} verified, ${data.unverified} not verified`,
       )
       const autoSelect = new Set(
         (data.results ?? [])
@@ -141,7 +140,7 @@ export default function VerifyNumbersPage() {
         description="Check whether MTN contacts are on the verified beneficiary list. Unverified numbers can be sent for verification."
       />
 
-      <Panel title="Check contacts" description="Paste one number per line, or separate with commas. MTN (Yello) beneficiary check via Datahub.">
+      <Panel title="Check contacts" description="Paste one number per line, or separate with commas. Checks MTN (Yello) beneficiary eligibility.">
         <textarea
           value={input}
           onChange={(e) => setInput(e.target.value)}

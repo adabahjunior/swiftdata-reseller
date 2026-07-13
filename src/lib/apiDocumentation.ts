@@ -87,7 +87,7 @@ export const DOC_ENDPOINTS: DocEndpoint[] = [
     path: '/v1/verify-number',
     title: 'Verify Number(s)',
     description:
-      'Check whether one or more MTN phones are on the Datahub verified beneficiary list. Pass phone or phones[].',
+      'Check whether one or more MTN phones are on the verified beneficiary list. Pass phone or phones[].',
     body: `{
   "phone": "0241234567"
 }`,
