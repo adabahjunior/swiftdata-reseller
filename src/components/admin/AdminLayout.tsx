@@ -6,6 +6,7 @@ import {
   Menu,
   Package,
   Settings,
+  ShieldCheck,
   ShoppingBag,
   Users,
   X,
@@ -23,6 +24,7 @@ const ICONS = {
   Users,
   Bell,
   Settings,
+  ShieldCheck,
 }
 
 function AdminSidebar({

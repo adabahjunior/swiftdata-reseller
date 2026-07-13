@@ -3,3 +3,6 @@ verify_jwt = false
 
 [functions.fulfill-orders]
 verify_jwt = false
+
+[functions.verify-numbers]
+verify_jwt = false

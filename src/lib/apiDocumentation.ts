@@ -83,6 +83,31 @@ export const DOC_ENDPOINTS: DocEndpoint[] = [
 }`,
   },
   {
+    method: 'POST',
+    path: '/v1/verify-number',
+    title: 'Verify Number(s)',
+    description:
+      'Check whether one or more MTN phones are on the Datahub verified beneficiary list. Pass phone or phones[].',
+    body: `{
+  "phone": "0241234567"
+}`,
+    response: `{
+  "success": true,
+  "checked": 1,
+  "verified": 0,
+  "unverified": 1,
+  "results": [
+    {
+      "phone": "0241234567",
+      "valid": true,
+      "verified": false,
+      "status": "unverified",
+      "message": "Number is not on the verified beneficiary list"
+    }
+  ]
+}`,
+  },
+  {
     method: 'GET',
     path: '/v1/orders',
     title: 'List Orders',
@@ -179,6 +204,7 @@ Quick Start
 3. GET /v1/packages — list available network + size_gb bundles
 4. POST /v1/buy-data — purchase data
 5. GET /v1/orders/{reference} — confirm delivery
+6. POST /v1/verify-number — check MTN beneficiary verification
 
 Endpoints
 ---------
@@ -221,6 +247,12 @@ Buy AirtelTigo iShare 2GB:
 Poll order status:
   curl -X GET "${API_BASE_URL}/v1/orders/ORD-ABC123XYZ" \\
     -H "Authorization: Bearer sk_live_your_api_key"
+
+Verify MTN number:
+  curl -X POST "${API_BASE_URL}/v1/verify-number" \\
+    -H "Authorization: Bearer sk_live_your_api_key" \\
+    -H "Content-Type: application/json" \\
+    -d '{"phone":"0241234567"}'
 `
 }
 

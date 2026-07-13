@@ -116,6 +116,24 @@ export interface OrderExportDownload {
   created_at: string
 }
 
+export interface NumberVerification {
+  id: string
+  user_id: string
+  phone: string
+  network: string
+  status: 'verified' | 'unverified' | 'pending' | 'submitted' | 'failed'
+  provider_exists: boolean | null
+  provider_message: string | null
+  provider_name: string | null
+  note: string | null
+  checked_at: string | null
+  requested_at: string | null
+  resolved_at: string | null
+  resolved_by: string | null
+  created_at: string
+  updated_at: string
+}
+
 export interface Database {
   public: {
     Tables: {

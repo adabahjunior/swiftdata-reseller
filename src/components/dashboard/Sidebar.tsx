@@ -9,6 +9,7 @@ import {
   Send,
   Settings,
   Shield,
+  ShieldCheck,
   ShoppingBag,
   Wallet,
   X,
@@ -27,6 +28,7 @@ const ICONS = {
   Key,
   BookOpen,
   Settings,
+  ShieldCheck,
 }
 
 interface SidebarProps {

@@ -14,8 +14,10 @@ import ApiHealthPage from './pages/dashboard/ApiHealthPage'
 import MyApiPage from './pages/dashboard/MyApiPage'
 import DocumentationPage from './pages/dashboard/DocumentationPage'
 import SettingsPage from './pages/dashboard/SettingsPage'
+import VerifyNumbersPage from './pages/dashboard/VerifyNumbersPage'
 import AdminOverviewPage from './pages/admin/AdminOverviewPage'
 import AdminOrdersPage from './pages/admin/AdminOrdersPage'
+import AdminNumberVerificationsPage from './pages/admin/AdminNumberVerificationsPage'
 import AdminPackagesPage from './pages/admin/AdminPackagesPage'
 import AdminUsersPage from './pages/admin/AdminUsersPage'
 import AdminUserDetailPage from './pages/admin/AdminUserDetailPage'
@@ -34,6 +36,7 @@ export default function App() {
               <Route index element={<OverviewPage />} />
               <Route path="balance" element={<ApiBalancePage />} />
               <Route path="place-order" element={<PlaceOrderPage />} />
+              <Route path="verify-numbers" element={<VerifyNumbersPage />} />
               <Route path="orders" element={<OrdersPage />} />
               <Route path="packages" element={<DataPackagesPage />} />
               <Route path="health" element={<ApiHealthPage />} />
@@ -46,6 +49,7 @@ export default function App() {
             <Route path="/admin" element={<AdminLayout />}>
               <Route index element={<AdminOverviewPage />} />
               <Route path="orders" element={<AdminOrdersPage />} />
+              <Route path="verifications" element={<AdminNumberVerificationsPage />} />
               <Route path="packages" element={<AdminPackagesPage />} />
               <Route path="users" element={<AdminUsersPage />} />
               <Route path="users/:userId" element={<AdminUserDetailPage />} />

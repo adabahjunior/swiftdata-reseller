@@ -184,6 +184,52 @@ Deno.serve(async (req) => {
           else triggerProviderFulfillment()
         }
       }
+    } else if (path === '/v1/verify-number' && req.method === 'POST') {
+      const body = await req.json().catch(() => ({}))
+      const phones: string[] = Array.isArray(body.phones)
+        ? body.phones.map(String)
+        : body.phone
+          ? [String(body.phone)]
+          : []
+
+      if (phones.length === 0) {
+        statusCode = 400
+        responseBody = { success: false, error: 'phone or phones[] is required' }
+      } else if (phones.length > 50) {
+        statusCode = 400
+        responseBody = { success: false, error: 'Maximum 50 numbers per request' }
+      } else {
+        const base = Deno.env.get('SUPABASE_URL')
+        const key = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
+        if (!base || !key) {
+          statusCode = 500
+          responseBody = { success: false, error: 'Server misconfigured' }
+        } else {
+          const verifyRes = await fetch(`${base}/functions/v1/verify-numbers/check`, {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${key}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ phones }),
+          })
+          const verifyBody = await verifyRes.json().catch(() => ({}))
+          if (!verifyRes.ok || !verifyBody?.success) {
+            statusCode = verifyRes.status >= 400 ? verifyRes.status : 502
+            responseBody = verifyBody?.error
+              ? verifyBody
+              : { success: false, error: 'Provider verification failed' }
+          } else {
+            responseBody = {
+              success: true,
+              checked: verifyBody.checked,
+              verified: verifyBody.verified,
+              unverified: verifyBody.unverified,
+              results: verifyBody.results,
+            }
+          }
+        }
+      }
     } else if (path === '/v1/orders' && req.method === 'GET') {
       const limit = Math.min(Number(url.searchParams.get('limit') ?? 50), 100)
       const offset = Number(url.searchParams.get('offset') ?? 0)

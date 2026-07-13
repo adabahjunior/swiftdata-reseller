@@ -9,6 +9,7 @@ const PAGE_TITLES: Record<string, string> = {
   '/dashboard': 'Overview',
   '/dashboard/balance': 'My API Balance',
   '/dashboard/place-order': 'Place Order',
+  '/dashboard/verify-numbers': 'Verify Numbers',
   '/dashboard/orders': 'All Orders',
   '/dashboard/packages': 'Data Packages',
   '/dashboard/health': 'API Health',
