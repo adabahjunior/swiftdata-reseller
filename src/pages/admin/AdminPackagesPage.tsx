@@ -1,5 +1,5 @@
 import { Pencil, Plus, Trash2, X } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { EmptyState, PageHeader, Panel, StatusBadge } from '../../components/dashboard/ui'
 import { PACKAGE_NETWORKS } from '../../lib/constants'
 import { formatCurrency, formatNetwork } from '../../lib/format'
@@ -20,14 +20,21 @@ export default function AdminPackagesPage() {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
+  const formRef = useRef<HTMLDivElement>(null)
 
   const refresh = async () => {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('data_packages')
       .select('*')
       .order('network')
       .order('size_gb')
-    setPackages((data as DataPackage[]) ?? [])
+
+    if (error) {
+      setMessage(error.message)
+      setPackages([])
+    } else {
+      setPackages((data as DataPackage[]) ?? [])
+    }
     setLoading(false)
   }
 
@@ -44,12 +51,15 @@ export default function AdminPackagesPage() {
     setEditingId(pkg.id)
     setForm({
       network: pkg.network,
-      size_gb: String(pkg.size_gb),
-      price: String(pkg.price),
+      size_gb: String(Number(pkg.size_gb)),
+      price: String(Number(pkg.price)),
       validity: pkg.validity || 'Non expiry',
     })
-    setMessage(null)
-    window.scrollTo({ top: 0, behavior: 'smooth' })
+    setMessage(`Editing ${formatNetwork(pkg.network)} ${pkg.size_gb} GB — update fields and click Save.`)
+    // Admin content scrolls inside <main>, not the window
+    requestAnimationFrame(() => {
+      formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    })
   }
 
   const handleSave = async () => {
@@ -75,9 +85,36 @@ export default function AdminPackagesPage() {
       validity: form.validity.trim() || 'Non expiry',
     }
 
-    const { error } = editingId
-      ? await supabase.from('data_packages').update(payload).eq('id', editingId)
-      : await supabase.from('data_packages').insert({ ...payload, active: true })
+    if (editingId) {
+      const { data, error } = await supabase
+        .from('data_packages')
+        .update(payload)
+        .eq('id', editingId)
+        .select('*')
+        .maybeSingle()
+
+      setSaving(false)
+
+      if (error) {
+        setMessage(error.message)
+        return
+      }
+      if (!data) {
+        setMessage('Update failed — you may not have admin permission, or the package was removed.')
+        return
+      }
+
+      setMessage('Package updated successfully.')
+      resetForm()
+      await refresh()
+      return
+    }
+
+    const { data, error } = await supabase
+      .from('data_packages')
+      .insert({ ...payload, active: true })
+      .select('*')
+      .maybeSingle()
 
     setSaving(false)
 
@@ -85,21 +122,40 @@ export default function AdminPackagesPage() {
       setMessage(error.message)
       return
     }
+    if (!data) {
+      setMessage('Insert failed — you may not have admin permission.')
+      return
+    }
 
-    setMessage(editingId ? 'Package updated successfully.' : 'Package added successfully.')
+    setMessage('Package added successfully.')
     resetForm()
     await refresh()
   }
 
   const toggleActive = async (pkg: DataPackage) => {
-    await supabase.from('data_packages').update({ active: !pkg.active }).eq('id', pkg.id)
+    const { data, error } = await supabase
+      .from('data_packages')
+      .update({ active: !pkg.active })
+      .eq('id', pkg.id)
+      .select('id')
+      .maybeSingle()
+
+    if (error || !data) {
+      setMessage(error?.message ?? 'Could not update package status.')
+      return
+    }
     await refresh()
   }
 
   const deletePackage = async (id: string) => {
     if (!confirm('Delete this package?')) return
     if (editingId === id) resetForm()
-    await supabase.from('data_packages').delete().eq('id', id)
+
+    const { error } = await supabase.from('data_packages').delete().eq('id', id)
+    if (error) {
+      setMessage(error.message)
+      return
+    }
     await refresh()
   }
 
@@ -110,93 +166,102 @@ export default function AdminPackagesPage() {
         description="Create, edit, and manage data packages available via the API."
       />
 
-      <Panel
-        title={editingId ? 'Edit Package' : 'Add Package'}
-        description={editingId ? 'Update the selected package, then save.' : undefined}
-      >
-        <div className="grid sm:grid-cols-2 lg:grid-cols-5 gap-3 items-end">
-          <div>
-            <label className="text-xs font-medium text-muted-foreground">Network</label>
-            <select
-              value={form.network}
-              onChange={(e) => setForm({ ...form, network: e.target.value })}
-              className="mt-1 w-full h-10 rounded-lg border border-white/10 bg-secondary/50 px-3 text-sm outline-none"
-            >
-              {PACKAGE_NETWORKS.map(({ id, label }) => (
-                <option key={id} value={id}>
-                  {label}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="text-xs font-medium text-muted-foreground">Size (GB)</label>
-            <input
-              type="number"
-              step="0.1"
-              min="0.1"
-              value={form.size_gb}
-              onChange={(e) => setForm({ ...form, size_gb: e.target.value })}
-              className="mt-1 w-full h-10 rounded-lg border border-white/10 bg-secondary/50 px-3 text-sm outline-none"
-            />
-          </div>
-          <div>
-            <label className="text-xs font-medium text-muted-foreground">Price (GHS)</label>
-            <input
-              type="number"
-              step="0.01"
-              min="0"
-              value={form.price}
-              onChange={(e) => setForm({ ...form, price: e.target.value })}
-              className="mt-1 w-full h-10 rounded-lg border border-white/10 bg-secondary/50 px-3 text-sm outline-none"
-            />
-          </div>
-          <div>
-            <label className="text-xs font-medium text-muted-foreground">Validity</label>
-            <input
-              value={form.validity}
-              onChange={(e) => setForm({ ...form, validity: e.target.value })}
-              className="mt-1 w-full h-10 rounded-lg border border-white/10 bg-secondary/50 px-3 text-sm outline-none"
-            />
-          </div>
-          <div className="flex gap-2">
+      <div ref={formRef}>
+        <Panel
+          title={editingId ? 'Edit Package' : 'Add Package'}
+          description={
+            editingId
+              ? 'Update the selected package, then click Save.'
+              : 'Fill in the details to create a new package.'
+          }
+          className={editingId ? 'border-red-500/40 ring-1 ring-red-500/20' : ''}
+          action={
+            editingId ? (
+              <button
+                type="button"
+                onClick={resetForm}
+                className="h-9 px-3 rounded-lg border border-white/10 text-xs font-bold inline-flex items-center gap-1.5 hover:bg-white/5"
+              >
+                <X className="h-3.5 w-3.5" />
+                Cancel edit
+              </button>
+            ) : undefined
+          }
+        >
+          <div className="grid sm:grid-cols-2 lg:grid-cols-5 gap-3 items-end">
+            <div>
+              <label className="text-xs font-medium text-muted-foreground">Network</label>
+              <select
+                value={form.network}
+                onChange={(e) => setForm({ ...form, network: e.target.value })}
+                className="mt-1 w-full h-10 rounded-lg border border-white/10 bg-secondary/50 px-3 text-sm outline-none"
+              >
+                {PACKAGE_NETWORKS.map(({ id, label }) => (
+                  <option key={id} value={id}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground">Size (GB)</label>
+              <input
+                type="number"
+                step="0.1"
+                min="0.1"
+                value={form.size_gb}
+                onChange={(e) => setForm({ ...form, size_gb: e.target.value })}
+                className="mt-1 w-full h-10 rounded-lg border border-white/10 bg-secondary/50 px-3 text-sm outline-none"
+              />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground">Price (GHS)</label>
+              <input
+                type="number"
+                step="0.01"
+                min="0"
+                value={form.price}
+                onChange={(e) => setForm({ ...form, price: e.target.value })}
+                className="mt-1 w-full h-10 rounded-lg border border-white/10 bg-secondary/50 px-3 text-sm outline-none"
+              />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground">Validity</label>
+              <input
+                value={form.validity}
+                onChange={(e) => setForm({ ...form, validity: e.target.value })}
+                className="mt-1 w-full h-10 rounded-lg border border-white/10 bg-secondary/50 px-3 text-sm outline-none"
+              />
+            </div>
             <button
               type="button"
               onClick={() => void handleSave()}
               disabled={saving}
-              className="flex-1 h-10 rounded-lg bg-red-500 text-white font-bold inline-flex items-center justify-center gap-2 disabled:opacity-60"
+              className="h-10 rounded-lg bg-red-500 text-white font-bold inline-flex items-center justify-center gap-2 disabled:opacity-60"
             >
               {editingId ? (
-                <>Save</>
+                saving ? 'Saving…' : 'Save changes'
               ) : (
                 <>
                   <Plus className="h-4 w-4" />
-                  Add
+                  {saving ? 'Adding…' : 'Add'}
                 </>
               )}
             </button>
-            {editingId && (
-              <button
-                type="button"
-                onClick={resetForm}
-                className="h-10 w-10 rounded-lg border border-white/10 grid place-items-center hover:bg-white/5"
-                aria-label="Cancel edit"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            )}
           </div>
-        </div>
-        {message && (
-          <p
-            className={`text-sm mt-3 ${
-              message.includes('success') ? 'text-emerald-400' : 'text-destructive'
-            }`}
-          >
-            {message}
-          </p>
-        )}
-      </Panel>
+          {message && (
+            <p
+              className={`text-sm mt-3 ${
+                message.includes('success') || message.startsWith('Editing')
+                  ? 'text-emerald-400'
+                  : 'text-destructive'
+              }`}
+            >
+              {message}
+            </p>
+          )}
+        </Panel>
+      </div>
 
       <Panel title="All Packages" description={`${packages.length} package(s)`}>
         {loading ? (
@@ -220,7 +285,7 @@ export default function AdminPackagesPage() {
                 {packages.map((pkg) => (
                   <tr
                     key={pkg.id}
-                    className={editingId === pkg.id ? 'bg-red-500/5' : undefined}
+                    className={editingId === pkg.id ? 'bg-red-500/10' : undefined}
                   >
                     <td className="px-5 md:px-6 py-3">{formatNetwork(pkg.network)}</td>
                     <td className="px-5 md:px-6 py-3 font-bold">{pkg.size_gb} GB</td>
@@ -234,7 +299,7 @@ export default function AdminPackagesPage() {
                         <button
                           type="button"
                           onClick={() => startEdit(pkg)}
-                          className="inline-flex items-center gap-1 text-xs font-bold text-foreground/80 hover:underline"
+                          className="inline-flex items-center gap-1 text-xs font-bold text-red-400 hover:underline"
                         >
                           <Pencil className="h-3.5 w-3.5" />
                           Edit
