@@ -7,11 +7,21 @@ const corsHeaders = {
 }
 
 const DATAHUB_BASE = 'https://user.datahubgh.com/api/external'
+const SKPLUG_BASE = 'https://skdataplug.com/api/v1'
 
-const NETWORK_MAP: Record<string, string> = {
+/** Our DB network → Datahub networkKey */
+const DATAHUB_NETWORK_MAP: Record<string, string> = {
   mtn: 'YELLO',
   at_ishare: 'AT_PREMIUM',
   at_bigtime: 'AT_BIGTIME',
+  telecel: 'TELECEL',
+}
+
+/** Our DB network → SK Plug network */
+const SKPLUG_NETWORK_MAP: Record<string, string> = {
+  mtn: 'MTN',
+  at_ishare: 'AT_EXPIRY',
+  at_bigtime: 'AT_NOEXPIRY',
   telecel: 'TELECEL',
 }
 
@@ -26,11 +36,21 @@ type OrderRow = {
 }
 
 type ProviderSlug = 'primary' | 'secondary'
+type ProviderType = 'datahub' | 'skplug'
 
 type ActiveProvider = {
   slug: ProviderSlug
+  type: ProviderType
   name: string
   apiKey: string
+}
+
+type PurchaseResult = {
+  success: boolean
+  providerRef: string | null
+  providerOrderNo: string | null
+  error: string | null
+  raw: Record<string, unknown>
 }
 
 function json(data: unknown, status = 200) {
@@ -49,19 +69,22 @@ function getActiveProvider(
 
   const primaryKey =
     settingsMap.data_provider_primary_api_key?.trim() || envFallback?.trim() || ''
-  const secondaryKey =
-    settingsMap.data_provider_secondary_api_key?.trim() || envFallback?.trim() || ''
+  const secondaryKey = settingsMap.data_provider_secondary_api_key?.trim() || ''
 
   if (slug === 'secondary') {
+    const type = (settingsMap.data_provider_secondary_type?.trim() || 'skplug') as ProviderType
     return {
       slug,
-      name: settingsMap.data_provider_secondary_name?.trim() || 'Secondary Datahub',
+      type: type === 'datahub' ? 'datahub' : 'skplug',
+      name: settingsMap.data_provider_secondary_name?.trim() || 'SK Plug',
       apiKey: secondaryKey,
     }
   }
 
+  const type = (settingsMap.data_provider_primary_type?.trim() || 'datahub') as ProviderType
   return {
     slug,
+    type: type === 'skplug' ? 'skplug' : 'datahub',
     name: settingsMap.data_provider_primary_name?.trim() || 'Primary Datahub',
     apiKey: primaryKey,
   }
@@ -70,7 +93,7 @@ function getActiveProvider(
 async function datahubPurchase(
   apiKey: string,
   payload: { networkKey: string; recipient: string; capacity: number; reference: string },
-) {
+): Promise<PurchaseResult> {
   const res = await fetch(`${DATAHUB_BASE}/data-purchase`, {
     method: 'POST',
     headers: {
@@ -80,7 +103,92 @@ async function datahubPurchase(
     body: JSON.stringify(payload),
   })
   const body = await res.json().catch(() => ({}))
-  return { ok: res.ok, status: res.status, body }
+  const success = Boolean(body?.success)
+  return {
+    success,
+    providerRef: body?.data?.reference ?? body?.reference ?? body?.data?.orderReference ?? null,
+    providerOrderNo:
+      body?.data?.orderNumber ?? body?.orderNumber ?? body?.data?.orderNo ?? null,
+    error: success ? null : String(body?.error ?? body?.message ?? 'Datahub rejected order'),
+    raw: body as Record<string, unknown>,
+  }
+}
+
+async function skplugPurchase(
+  token: string,
+  payload: { recipient: string; network: string; gb_size: string },
+): Promise<PurchaseResult> {
+  const res = await fetch(`${SKPLUG_BASE}/order/`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  })
+  const body = await res.json().catch(() => ({}))
+  const orderId =
+    body?.order_id ?? body?.orderId ?? body?.data?.order_id ?? body?.id ?? null
+  const status = String(body?.status ?? body?.data?.status ?? '').toLowerCase()
+  const success =
+    res.ok &&
+    Boolean(orderId) &&
+    status !== 'failed' &&
+    !body?.error &&
+    body?.success !== false
+
+  return {
+    success,
+    providerRef: orderId ? String(orderId) : null,
+    providerOrderNo: orderId ? String(orderId) : null,
+    error: success
+      ? null
+      : String(body?.error ?? body?.message ?? body?.detail ?? `SK Plug rejected order (${res.status})`),
+    raw: body as Record<string, unknown>,
+  }
+}
+
+async function purchaseWithProvider(
+  provider: ActiveProvider,
+  order: OrderRow,
+  mtnNetworkKey: string,
+): Promise<PurchaseResult> {
+  if (provider.type === 'skplug') {
+    const network = SKPLUG_NETWORK_MAP[order.network] ?? order.network.toUpperCase()
+    return skplugPurchase(provider.apiKey, {
+      recipient: order.phone,
+      network,
+      gb_size: String(Number(order.size_gb)),
+    })
+  }
+
+  const networkKey =
+    order.network === 'mtn'
+      ? mtnNetworkKey
+      : DATAHUB_NETWORK_MAP[order.network] ?? order.network.toUpperCase()
+
+  return datahubPurchase(provider.apiKey, {
+    networkKey,
+    recipient: order.phone,
+    capacity: Number(order.size_gb),
+    reference: order.reference,
+  })
+}
+
+async function providerHealth(provider: ActiveProvider) {
+  if (provider.type === 'skplug') {
+    const res = await fetch(`${SKPLUG_BASE}/bundles/`, {
+      headers: { Authorization: `Bearer ${provider.apiKey}` },
+    })
+    const body = await res.json().catch(() => ({}))
+    return { ok: res.ok, body }
+  }
+
+  const res = await fetch(`${DATAHUB_BASE}/balance`, {
+    headers: { 'X-API-Key': provider.apiKey },
+  })
+  const body = await res.json().catch(() => ({}))
+  return { ok: res.ok, body }
 }
 
 async function fulfillOrder(
@@ -98,7 +206,7 @@ async function fulfillOrder(
       provider_submitted_at: new Date().toISOString(),
       provider_status: 'failed',
       provider_name: provider.name,
-      provider_error: `No API key configured for ${provider.slug} provider`,
+      provider_error: `No API credential configured for ${provider.slug} provider`,
     }
     await supabase.from('orders').update(update).eq('id', order.id)
     return {
@@ -107,36 +215,21 @@ async function fulfillOrder(
       success: false,
       provider_status: update.provider_status,
       provider_name: provider.name,
+      provider_type: provider.type,
       error: update.provider_error,
     }
   }
 
-  const networkKey =
-    order.network === 'mtn'
-      ? mtnNetworkKey
-      : NETWORK_MAP[order.network] ?? order.network.toUpperCase()
-
-  const { body } = await datahubPurchase(provider.apiKey, {
-    networkKey,
-    recipient: order.phone,
-    capacity: Number(order.size_gb),
-    reference: order.reference,
-  })
-
-  const success = Boolean(body?.success)
-  const providerRef =
-    body?.data?.reference ?? body?.reference ?? body?.data?.orderReference ?? null
-  const providerOrderNo =
-    body?.data?.orderNumber ?? body?.orderNumber ?? body?.data?.orderNo ?? null
+  const result = await purchaseWithProvider(provider, order, mtnNetworkKey)
 
   const update = {
     provider_submitted_at: new Date().toISOString(),
-    provider_status: success ? 'submitted' : 'failed',
+    provider_status: result.success ? 'submitted' : 'failed',
     provider_name: provider.name,
-    provider_reference: providerRef,
-    provider_order_number: providerOrderNo ? String(providerOrderNo) : null,
-    provider_error: success ? null : String(body?.error ?? body?.message ?? 'Provider rejected order'),
-    status: success && order.status === 'pending' ? 'processing' : order.status,
+    provider_reference: result.providerRef,
+    provider_order_number: result.providerOrderNo,
+    provider_error: result.error,
+    status: result.success && order.status === 'pending' ? 'processing' : order.status,
   }
 
   await supabase.from('orders').update(update).eq('id', order.id)
@@ -144,11 +237,12 @@ async function fulfillOrder(
   return {
     order_id: order.id,
     reference: order.reference,
-    success,
+    success: result.success,
     provider_status: update.provider_status,
     provider_name: provider.name,
-    error: update.provider_error,
-    provider_reference: providerRef,
+    provider_type: provider.type,
+    error: result.error,
+    provider_reference: result.providerRef,
   }
 }
 
@@ -182,7 +276,7 @@ Deno.serve(async (req) => {
       if (!provider.apiKey) {
         return json({
           success: false,
-          error: `No API key configured for active ${provider.slug} provider`,
+          error: `No API credential configured for active ${provider.slug} provider`,
         }, 500)
       }
 
@@ -206,6 +300,7 @@ Deno.serve(async (req) => {
         success: true,
         active_provider: provider.slug,
         provider_name: provider.name,
+        provider_type: provider.type,
         processed: results.length,
         succeeded: results.filter((r) => r.success).length,
         failed: results.filter((r) => r.success === false).length,
@@ -226,7 +321,7 @@ Deno.serve(async (req) => {
       if (!provider.apiKey) {
         return json({
           success: false,
-          error: `No API key configured for active ${provider.slug} provider`,
+          error: `No API credential configured for active ${provider.slug} provider`,
         }, 500)
       }
 
@@ -243,7 +338,13 @@ Deno.serve(async (req) => {
       }
 
       const result = await fulfillOrder(supabase, provider, order as OrderRow, mtnKey)
-      return json({ success: true, active_provider: provider.slug, provider_name: provider.name, result })
+      return json({
+        success: true,
+        active_provider: provider.slug,
+        provider_name: provider.name,
+        provider_type: provider.type,
+        result,
+      })
     }
 
     if (req.method === 'GET' && path === '/health') {
@@ -254,28 +355,26 @@ Deno.serve(async (req) => {
       if (!provider.apiKey) {
         return json({
           success: false,
-          error: `No API key configured for active ${provider.slug} provider`,
+          error: `No API credential configured for active ${provider.slug} provider`,
         }, 500)
       }
 
-      const res = await fetch(`${DATAHUB_BASE}/balance`, {
-        headers: { 'X-API-Key': provider.apiKey },
-      })
-      const body = await res.json()
+      const health = await providerHealth(provider)
       return json({
-        success: res.ok,
+        success: health.ok,
         active_provider: provider.slug,
         provider_name: provider.name,
-        datahub: body,
+        provider_type: provider.type,
+        upstream: health.body,
       })
     }
 
     return json({
       success: true,
       endpoints: {
-        'POST /process': 'Submit all pending orders to active Datahub provider',
-        'POST /order/{id}': 'Submit one order to active Datahub provider',
-        'GET /health': 'Check active Datahub provider connection',
+        'POST /process': 'Submit pending orders to the active provider (Datahub or SK Plug)',
+        'POST /order/{id}': 'Submit one order to the active provider',
+        'GET /health': 'Check active provider connection',
       },
     })
   } catch (e) {

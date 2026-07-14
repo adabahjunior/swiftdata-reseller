@@ -42,30 +42,35 @@ function normalizePhone(raw: string): string {
   return phone
 }
 
-function getActiveProvider(
+/** Number verification always uses Datahub (primary). SK Plug has no beneficiary check API. */
+function getDatahubProvider(
   settingsMap: Record<string, string>,
   envFallback?: string | null,
 ): ActiveProvider {
-  const slug: ProviderSlug =
-    settingsMap.active_data_provider === 'secondary' ? 'secondary' : 'primary'
+  const primaryType = settingsMap.data_provider_primary_type?.trim() || 'datahub'
+  const secondaryType = settingsMap.data_provider_secondary_type?.trim() || 'skplug'
 
-  const primaryKey =
-    settingsMap.data_provider_primary_api_key?.trim() || envFallback?.trim() || ''
-  const secondaryKey =
-    settingsMap.data_provider_secondary_api_key?.trim() || envFallback?.trim() || ''
-
-  if (slug === 'secondary') {
+  if (primaryType !== 'skplug') {
     return {
-      slug,
-      name: settingsMap.data_provider_secondary_name?.trim() || 'Secondary Datahub',
-      apiKey: secondaryKey,
+      slug: 'primary',
+      name: settingsMap.data_provider_primary_name?.trim() || 'Primary Datahub',
+      apiKey:
+        settingsMap.data_provider_primary_api_key?.trim() || envFallback?.trim() || '',
+    }
+  }
+
+  if (secondaryType === 'datahub') {
+    return {
+      slug: 'secondary',
+      name: settingsMap.data_provider_secondary_name?.trim() || 'Datahub',
+      apiKey: settingsMap.data_provider_secondary_api_key?.trim() || envFallback?.trim() || '',
     }
   }
 
   return {
-    slug,
+    slug: 'primary',
     name: settingsMap.data_provider_primary_name?.trim() || 'Primary Datahub',
-    apiKey: primaryKey,
+    apiKey: settingsMap.data_provider_primary_api_key?.trim() || envFallback?.trim() || '',
   }
 }
 
@@ -242,7 +247,7 @@ Deno.serve(async (req) => {
 
     const { data: settings } = await supabase.from('site_settings').select('key, value')
     const settingsMap = Object.fromEntries((settings ?? []).map((s) => [s.key, s.value]))
-    const provider = getActiveProvider(settingsMap, envFallback)
+    const provider = getDatahubProvider(settingsMap, envFallback)
 
     if (req.method === 'POST' && (path === '/check' || path === '/')) {
       if (!provider.apiKey) {

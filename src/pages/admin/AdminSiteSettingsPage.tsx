@@ -11,6 +11,8 @@ const PROVIDER_SETTING_KEYS = new Set([
   'data_provider_secondary_name',
   'data_provider_primary_api_key',
   'data_provider_secondary_api_key',
+  'data_provider_primary_type',
+  'data_provider_secondary_type',
 ])
 
 export default function AdminSiteSettingsPage() {
@@ -76,10 +78,12 @@ export default function AdminSiteSettingsPage() {
 
     const providerUpdates: Array<[string, string, string]> = [
       ['active_data_provider', getValue('active_data_provider', 'primary'), 'Active data provider (primary or secondary)'],
+      ['data_provider_primary_type', getValue('data_provider_primary_type', 'datahub'), 'Primary provider API type (datahub or skplug)'],
+      ['data_provider_secondary_type', getValue('data_provider_secondary_type', 'skplug'), 'Secondary provider API type (datahub or skplug)'],
       ['data_provider_primary_name', getValue('data_provider_primary_name', 'Primary Datahub'), 'Display name for primary provider'],
-      ['data_provider_secondary_name', getValue('data_provider_secondary_name', 'Secondary Datahub'), 'Display name for secondary provider'],
+      ['data_provider_secondary_name', getValue('data_provider_secondary_name', 'SK Plug'), 'Display name for secondary provider'],
       ['data_provider_primary_api_key', getValue('data_provider_primary_api_key'), 'Primary Datahub API key'],
-      ['data_provider_secondary_api_key', getValue('data_provider_secondary_api_key'), 'Secondary Datahub API key'],
+      ['data_provider_secondary_api_key', getValue('data_provider_secondary_api_key'), 'Secondary SK Plug API token'],
     ]
 
     for (const [key, value, label] of providerUpdates) {
@@ -173,7 +177,9 @@ export default function AdminSiteSettingsPage() {
   const generalSettings = settings.filter((s) => !PROVIDER_SETTING_KEYS.has(s.key))
   const activeProvider = getValue('active_data_provider', 'primary')
   const primaryName = getValue('data_provider_primary_name', 'Primary Datahub')
-  const secondaryName = getValue('data_provider_secondary_name', 'Secondary Datahub')
+  const secondaryName = getValue('data_provider_secondary_name', 'SK Plug')
+  const primaryType = getValue('data_provider_primary_type', 'datahub')
+  const secondaryType = getValue('data_provider_secondary_type', 'skplug')
 
   return (
     <div className="space-y-6 md:space-y-8">
@@ -194,7 +200,7 @@ export default function AdminSiteSettingsPage() {
 
       <Panel
         title="Data Providers"
-        description="Switch between primary and secondary Datahub accounts. The active provider receives all new orders immediately."
+        description="Switch between Datahub (primary) and SK Plug (secondary). The active provider receives all new orders immediately."
       >
         {loading ? (
           <p className="text-sm text-muted-foreground">Loading provider settings…</p>
@@ -208,6 +214,7 @@ export default function AdminSiteSettingsPage() {
               <div className="grid sm:grid-cols-2 gap-3">
                 {(['primary', 'secondary'] as const).map((slug) => {
                   const name = slug === 'primary' ? primaryName : secondaryName
+                  const type = slug === 'primary' ? primaryType : secondaryType
                   const selected = activeProvider === slug
                   return (
                     <button
@@ -222,6 +229,9 @@ export default function AdminSiteSettingsPage() {
                     >
                       <p className="text-xs uppercase tracking-wide text-muted-foreground">{slug}</p>
                       <p className="font-semibold mt-1">{name}</p>
+                      <p className="text-[11px] text-muted-foreground mt-1">
+                        {type === 'skplug' ? 'SK Plug API' : 'Datahub API'}
+                      </p>
                       {selected && (
                         <p className="text-xs text-emerald-400 mt-2">Active — receiving new orders</p>
                       )}
@@ -233,7 +243,7 @@ export default function AdminSiteSettingsPage() {
 
             <div className="grid sm:grid-cols-2 gap-5">
               <div className="space-y-4 rounded-xl border border-white/10 p-4">
-                <h3 className="text-sm font-semibold">Primary provider</h3>
+                <h3 className="text-sm font-semibold">Primary — Datahub</h3>
                 <div>
                   <label className="text-xs text-muted-foreground">Display name</label>
                   <input
@@ -251,10 +261,13 @@ export default function AdminSiteSettingsPage() {
                     className="mt-1 border-white/10 pl-3"
                   />
                 </div>
+                <p className="text-[11px] text-muted-foreground">
+                  Base: user.datahubgh.com · Auth: X-API-Key
+                </p>
               </div>
 
               <div className="space-y-4 rounded-xl border border-white/10 p-4">
-                <h3 className="text-sm font-semibold">Secondary provider</h3>
+                <h3 className="text-sm font-semibold">Secondary — SK Plug</h3>
                 <div>
                   <label className="text-xs text-muted-foreground">Display name</label>
                   <input
@@ -264,14 +277,17 @@ export default function AdminSiteSettingsPage() {
                   />
                 </div>
                 <div>
-                  <label className="text-xs text-muted-foreground">API key</label>
+                  <label className="text-xs text-muted-foreground">API token</label>
                   <PasswordInput
                     value={getValue('data_provider_secondary_api_key')}
                     onChange={(e) => setDraft({ ...draft, data_provider_secondary_api_key: e.target.value })}
-                    placeholder="sk_..."
+                    placeholder="Bearer token…"
                     className="mt-1 border-white/10 pl-3"
                   />
                 </div>
+                <p className="text-[11px] text-muted-foreground">
+                  Base: skdataplug.com/api/v1 · Auth: Bearer token
+                </p>
               </div>
             </div>
 
@@ -323,11 +339,11 @@ export default function AdminSiteSettingsPage() {
             ['maintenance_mode', 'Blocks API access when true'],
             ['api_enabled', 'Master switch for the API'],
             ['order_auto_deliver_seconds', 'Auto-deliver pending orders after N seconds'],
-            ['provider_fulfillment_enabled', 'Forward successful orders to Datahub provider'],
-            ['provider_mtn_network_key', 'Datahub network key for MTN orders (YELLO or MTN_XPRESS)'],
-            ['active_data_provider', 'Active Datahub account (primary or secondary)'],
+            ['provider_fulfillment_enabled', 'Forward successful orders to the active provider'],
+            ['provider_mtn_network_key', 'Datahub MTN network key (YELLO or MTN_XPRESS)'],
+            ['active_data_provider', 'Active provider slot (primary Datahub or secondary SK Plug)'],
             ['data_provider_primary_api_key', 'Primary Datahub API key (admin only)'],
-            ['data_provider_secondary_api_key', 'Secondary Datahub API key (admin only)'],
+            ['data_provider_secondary_api_key', 'Secondary SK Plug API token (admin only)'],
             ['min_topup_amount', 'Minimum wallet top-up in GHS'],
             ['platform_notice', 'Banner shown to users on login'],
           ].map(([key, desc]) => (
