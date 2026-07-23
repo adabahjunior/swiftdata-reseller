@@ -7,6 +7,7 @@ import { useOrders } from '../../hooks/useDashboardData'
 import { PACKAGE_NETWORKS } from '../../lib/constants'
 import { formatCurrency, formatDate, formatNetwork } from '../../lib/format'
 import { triggerOrderFulfillment, triggerProviderFulfillment } from '../../lib/providerFulfillment'
+import { triggerProviderStatusSync } from '../../lib/providerStatusSync'
 import { supabase } from '../../lib/supabase'
 
 export default function OrdersPage() {
@@ -45,6 +46,7 @@ export default function OrdersPage() {
     setMessage('Order completed successfully and sent for processing.')
     if (data.order?.id) void triggerOrderFulfillment(data.order.id)
     triggerProviderFulfillment()
+    triggerProviderStatusSync()
     await Promise.all([refresh(), refreshProfile()])
   }
 
@@ -120,6 +122,13 @@ export default function OrdersPage() {
                     <td className="px-5 md:px-6 py-3 font-bold">{formatCurrency(Number(order.amount))}</td>
                     <td className="px-5 md:px-6 py-3">
                       <StatusBadge status={order.status} />
+                      {order.provider_status &&
+                        order.status !== 'completed' &&
+                        order.status !== 'failed' && (
+                          <p className="text-[10px] text-muted-foreground mt-1 capitalize">
+                            Live: {order.provider_status.replace(/_/g, ' ')}
+                          </p>
+                        )}
                       {order.status === 'failed' && order.failure_reason === 'insufficient_balance' && (
                         <p className="text-[10px] text-muted-foreground mt-1">Insufficient balance</p>
                       )}

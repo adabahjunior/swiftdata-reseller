@@ -60,6 +60,17 @@ export interface Order {
   provider_error: string | null
   provider_submitted_at: string | null
   provider_name: string | null
+  provider_type: string | null
+}
+
+export interface SupportContact {
+  id: string
+  label: string
+  phone: string
+  active: boolean
+  display_order: number
+  created_at: string
+  updated_at: string
 }
 
 export interface Transaction {

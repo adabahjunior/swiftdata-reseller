@@ -6,3 +6,6 @@ verify_jwt = false
 
 [functions.verify-numbers]
 verify_jwt = false
+
+[functions.sync-provider-status]
+verify_jwt = false

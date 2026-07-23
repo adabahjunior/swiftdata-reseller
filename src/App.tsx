@@ -22,7 +22,9 @@ import AdminPackagesPage from './pages/admin/AdminPackagesPage'
 import AdminUsersPage from './pages/admin/AdminUsersPage'
 import AdminUserDetailPage from './pages/admin/AdminUserDetailPage'
 import AdminNotificationsPage from './pages/admin/AdminNotificationsPage'
+import SupportPage from './pages/dashboard/SupportPage'
 import AdminSiteSettingsPage from './pages/admin/AdminSiteSettingsPage'
+import AdminSupportPage from './pages/admin/AdminSupportPage'
 
 export default function App() {
   return (
@@ -42,6 +44,7 @@ export default function App() {
               <Route path="health" element={<ApiHealthPage />} />
               <Route path="api" element={<MyApiPage />} />
               <Route path="docs" element={<DocumentationPage />} />
+              <Route path="support" element={<SupportPage />} />
               <Route path="settings" element={<SettingsPage />} />
             </Route>
           </Route>
@@ -54,6 +57,7 @@ export default function App() {
               <Route path="users" element={<AdminUsersPage />} />
               <Route path="users/:userId" element={<AdminUserDetailPage />} />
               <Route path="notifications" element={<AdminNotificationsPage />} />
+              <Route path="support" element={<AdminSupportPage />} />
               <Route path="settings" element={<AdminSiteSettingsPage />} />
             </Route>
           </Route>

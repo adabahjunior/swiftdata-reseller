@@ -3,6 +3,7 @@ import { EmptyState, PageHeader, Panel } from '../../components/dashboard/ui'
 import { PasswordInput } from '../../components/PasswordInput'
 import { useAuth } from '../../context/AuthContext'
 import { useSiteSettings } from '../../hooks/useAdminData'
+import { providerWebhookUrl } from '../../lib/providerStatusSync'
 import { supabase } from '../../lib/supabase'
 
 const PROVIDER_SETTING_KEYS = new Set([
@@ -141,7 +142,7 @@ export default function AdminSiteSettingsPage() {
       )
     }
 
-    if (setting.key === 'maintenance_mode' || setting.key === 'api_enabled' || setting.key === 'provider_fulfillment_enabled') {
+    if (setting.key === 'maintenance_mode' || setting.key === 'api_enabled' || setting.key === 'provider_fulfillment_enabled' || setting.key === 'provider_status_sync_enabled') {
       return (
         <select
           value={value}
@@ -308,6 +309,29 @@ export default function AdminSiteSettingsPage() {
         )}
       </Panel>
 
+      <Panel
+        title="Live order status (Datahub)"
+        description="Register this webhook URL in your Datahub API docs (Webhooks tab) for instant updates. We also poll order status every 15 seconds when sync is enabled."
+      >
+        <label className="text-xs font-medium text-muted-foreground">Webhook callback URL</label>
+        <div className="mt-1 flex flex-wrap gap-2">
+          <code className="flex-1 min-w-0 text-xs font-mono bg-black/40 border border-white/10 rounded-xl p-3 break-all">
+            {providerWebhookUrl()}
+          </code>
+          <button
+            type="button"
+            onClick={() => void navigator.clipboard.writeText(providerWebhookUrl())}
+            className="h-10 px-4 rounded-lg border border-white/10 text-sm font-bold hover:bg-white/5 shrink-0"
+          >
+            Copy URL
+          </button>
+        </div>
+        <p className="text-[11px] text-muted-foreground mt-2">
+          In Datahub: POST <span className="font-mono">/webhook</span> with your callback URL, or paste this URL in their dashboard
+          webhook settings. SK Plug orders use polling via <span className="font-mono">GET /status/&#123;order_id&#125;/</span>.
+        </p>
+      </Panel>
+
       <Panel title="Platform Configuration">
         {loading ? (
           <p className="text-sm text-muted-foreground">Loading settings…</p>
@@ -340,6 +364,7 @@ export default function AdminSiteSettingsPage() {
             ['api_enabled', 'Master switch for the API'],
             ['order_auto_deliver_seconds', 'Auto-deliver pending orders after N seconds'],
             ['provider_fulfillment_enabled', 'Forward successful orders to the active provider'],
+            ['provider_status_sync_enabled', 'Poll provider APIs for live order status updates'],
             ['provider_mtn_network_key', 'Datahub MTN network key (YELLO or MTN_XPRESS)'],
             ['active_data_provider', 'Active provider slot (primary Datahub or secondary SK Plug)'],
             ['data_provider_primary_api_key', 'Primary Datahub API key (admin only)'],

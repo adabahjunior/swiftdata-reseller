@@ -15,6 +15,7 @@ const PAGE_TITLES: Record<string, string> = {
   '/dashboard/health': 'API Health',
   '/dashboard/api': 'My API',
   '/dashboard/docs': 'Documentation',
+  '/dashboard/support': 'Support',
   '/dashboard/settings': 'Settings',
 }
 

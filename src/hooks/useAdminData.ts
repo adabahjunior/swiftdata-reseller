@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
+import { triggerProviderStatusSync } from '../lib/providerStatusSync'
 import type { ApiKey, Notification, Order, OrderExportDownload, Profile, SiteSetting, Transaction } from '../types/database'
 
 export function useAdminStats() {
@@ -41,6 +42,7 @@ export function useAdminOrders() {
 
   const refresh = useCallback(async () => {
     await supabase.rpc('auto_deliver_pending_orders')
+    triggerProviderStatusSync()
 
     const { data: ordersData } = await supabase
       .from('orders')

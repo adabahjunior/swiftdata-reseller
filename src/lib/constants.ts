@@ -83,5 +83,6 @@ export const NAV_ITEMS = [
   { label: 'API Health', to: '/dashboard/health', icon: 'Activity' },
   { label: 'My API', to: '/dashboard/api', icon: 'Key' },
   { label: 'Documentation', to: '/dashboard/docs', icon: 'BookOpen' },
+  { label: 'Support', to: '/dashboard/support', icon: 'MessageCircle' },
   { label: 'Settings', to: '/dashboard/settings', icon: 'Settings' },
 ] as const

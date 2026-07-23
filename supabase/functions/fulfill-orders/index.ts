@@ -206,6 +206,7 @@ async function fulfillOrder(
       provider_submitted_at: new Date().toISOString(),
       provider_status: 'failed',
       provider_name: provider.name,
+      provider_type: provider.type,
       provider_error: `No API credential configured for ${provider.slug} provider`,
     }
     await supabase.from('orders').update(update).eq('id', order.id)
@@ -226,6 +227,7 @@ async function fulfillOrder(
     provider_submitted_at: new Date().toISOString(),
     provider_status: result.success ? 'submitted' : 'failed',
     provider_name: provider.name,
+    provider_type: provider.type,
     provider_reference: result.providerRef,
     provider_order_number: result.providerOrderNo,
     provider_error: result.error,

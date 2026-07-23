@@ -5,6 +5,7 @@ import {
   LayoutDashboard,
   LogOut,
   Menu,
+  MessageCircle,
   Package,
   Send,
   Settings,
@@ -29,6 +30,7 @@ const ICONS = {
   BookOpen,
   Settings,
   ShieldCheck,
+  MessageCircle,
 }
 
 interface SidebarProps {

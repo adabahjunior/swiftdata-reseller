@@ -5,6 +5,7 @@ export const ADMIN_NAV_ITEMS = [
   { label: 'Packages', to: '/admin/packages', icon: 'Package' },
   { label: 'Users', to: '/admin/users', icon: 'Users' },
   { label: 'Notifications', to: '/admin/notifications', icon: 'Bell' },
+  { label: 'Support WhatsApp', to: '/admin/support', icon: 'MessageCircle' },
   { label: 'Site Settings', to: '/admin/settings', icon: 'Settings' },
 ] as const
 
@@ -15,5 +16,6 @@ export const ADMIN_PAGE_TITLES: Record<string, string> = {
   '/admin/packages': 'Packages',
   '/admin/users': 'Users',
   '/admin/notifications': 'Notifications',
+  '/admin/support': 'Support WhatsApp',
   '/admin/settings': 'Site Settings',
 }

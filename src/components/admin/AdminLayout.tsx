@@ -4,6 +4,7 @@ import {
   LayoutDashboard,
   LogOut,
   Menu,
+  MessageCircle,
   Package,
   Settings,
   ShieldCheck,
@@ -25,6 +26,7 @@ const ICONS = {
   Bell,
   Settings,
   ShieldCheck,
+  MessageCircle,
 }
 
 function AdminSidebar({
