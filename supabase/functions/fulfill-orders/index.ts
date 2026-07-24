@@ -191,6 +191,34 @@ async function providerHealth(provider: ActiveProvider) {
   return { ok: res.ok, body }
 }
 
+/**
+ * Atomically claim an order before calling the provider.
+ * Prevents duplicate purchases when /order/{id} and /process race.
+ */
+async function claimOrderForProvider(
+  supabase: ReturnType<typeof createClient>,
+  orderId: string,
+  provider: ActiveProvider,
+) {
+  const claimedAt = new Date().toISOString()
+  const { data, error } = await supabase
+    .from('orders')
+    .update({
+      provider_submitted_at: claimedAt,
+      provider_status: 'submitting',
+      provider_name: provider.name,
+      provider_type: provider.type,
+      provider_error: null,
+    })
+    .eq('id', orderId)
+    .is('provider_submitted_at', null)
+    .select('id, reference, phone, network, size_gb, status, provider_submitted_at')
+    .maybeSingle()
+
+  if (error) throw error
+  return data as OrderRow | null
+}
+
 async function fulfillOrder(
   supabase: ReturnType<typeof createClient>,
   provider: ActiveProvider,
@@ -201,9 +229,13 @@ async function fulfillOrder(
     return { order_id: order.id, skipped: true, reason: 'Already submitted' }
   }
 
+  const claimed = await claimOrderForProvider(supabase, order.id, provider)
+  if (!claimed) {
+    return { order_id: order.id, skipped: true, reason: 'Already claimed by another worker' }
+  }
+
   if (!provider.apiKey) {
     const update = {
-      provider_submitted_at: new Date().toISOString(),
       provider_status: 'failed',
       provider_name: provider.name,
       provider_type: provider.type,
@@ -212,7 +244,7 @@ async function fulfillOrder(
     await supabase.from('orders').update(update).eq('id', order.id)
     return {
       order_id: order.id,
-      reference: order.reference,
+      reference: claimed.reference,
       success: false,
       provider_status: update.provider_status,
       provider_name: provider.name,
@@ -221,24 +253,23 @@ async function fulfillOrder(
     }
   }
 
-  const result = await purchaseWithProvider(provider, order, mtnNetworkKey)
+  const result = await purchaseWithProvider(provider, claimed, mtnNetworkKey)
 
   const update = {
-    provider_submitted_at: new Date().toISOString(),
     provider_status: result.success ? 'submitted' : 'failed',
     provider_name: provider.name,
     provider_type: provider.type,
     provider_reference: result.providerRef,
     provider_order_number: result.providerOrderNo,
     provider_error: result.error,
-    status: result.success && order.status === 'pending' ? 'processing' : order.status,
+    status: result.success && claimed.status === 'pending' ? 'processing' : claimed.status,
   }
 
   await supabase.from('orders').update(update).eq('id', order.id)
 
   return {
     order_id: order.id,
-    reference: order.reference,
+    reference: claimed.reference,
     success: result.success,
     provider_status: update.provider_status,
     provider_name: provider.name,

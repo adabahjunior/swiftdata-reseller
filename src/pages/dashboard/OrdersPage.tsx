@@ -6,7 +6,7 @@ import { useAuth } from '../../context/AuthContext'
 import { useOrders } from '../../hooks/useDashboardData'
 import { PACKAGE_NETWORKS } from '../../lib/constants'
 import { formatCurrency, formatDate, formatNetwork } from '../../lib/format'
-import { triggerOrderFulfillment, triggerProviderFulfillment } from '../../lib/providerFulfillment'
+import { triggerOrderFulfillment } from '../../lib/providerFulfillment'
 import { triggerProviderStatusSync } from '../../lib/providerStatusSync'
 import { supabase } from '../../lib/supabase'
 
@@ -44,8 +44,8 @@ export default function OrdersPage() {
     }
 
     setMessage('Order completed successfully and sent for processing.')
+    // Single-order path only — avoid also calling /process (duplicate provider purchases)
     if (data.order?.id) void triggerOrderFulfillment(data.order.id)
-    triggerProviderFulfillment()
     triggerProviderStatusSync()
     await Promise.all([refresh(), refreshProfile()])
   }

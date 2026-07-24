@@ -12,9 +12,9 @@ export default function AdminUsersPage() {
   const { users, loading, refresh } = useAdminUsers()
   const [search, setSearch] = useState('')
   const [topupCode, setTopupCode] = useState('')
-  const [creditAmount, setCreditAmount] = useState('')
-  const [creditMessage, setCreditMessage] = useState<string | null>(null)
-  const [crediting, setCrediting] = useState(false)
+  const [walletAmount, setWalletAmount] = useState('')
+  const [walletMessage, setWalletMessage] = useState<string | null>(null)
+  const [walletBusy, setWalletBusy] = useState(false)
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()
@@ -28,31 +28,38 @@ export default function AdminUsersPage() {
     )
   }, [users, search])
 
-  const creditByCode = async () => {
-    if (!currentUser || !topupCode.trim() || !creditAmount) return
-    const amount = Number(creditAmount)
+  const adjustByCode = async (mode: 'credit' | 'debit') => {
+    if (!currentUser || !topupCode.trim() || !walletAmount) return
+    const amount = Number(walletAmount)
     if (amount <= 0) return
 
-    setCrediting(true)
-    setCreditMessage(null)
+    setWalletBusy(true)
+    setWalletMessage(null)
 
-    const { data, error } = await supabase.rpc('admin_credit_wallet', {
+    const rpc = mode === 'credit' ? 'admin_credit_wallet' : 'admin_debit_wallet'
+    const note =
+      mode === 'credit'
+        ? `Manual MoMo top-up (ref: ${topupCode.trim()})`
+        : `Wallet deducted by admin (ref: ${topupCode.trim()})`
+
+    const { data, error } = await supabase.rpc(rpc, {
       p_admin_id: currentUser.id,
       p_amount: amount,
       p_topup_code: topupCode.trim(),
-      p_note: `Manual MoMo top-up (ref: ${topupCode.trim()})`,
+      p_note: note,
     })
 
-    setCrediting(false)
+    setWalletBusy(false)
     if (error || !data?.success) {
-      setCreditMessage(error?.message ?? data?.error ?? 'Credit failed')
+      setWalletMessage(error?.message ?? data?.error ?? `${mode === 'credit' ? 'Credit' : 'Deduct'} failed`)
       return
     }
-    setCreditMessage(
-      `Credited ${formatCurrency(amount)} to user ${data.topup_code}. New balance: ${formatCurrency(Number(data.new_balance))}`,
+    const verb = mode === 'credit' ? 'Credited' : 'Deducted'
+    setWalletMessage(
+      `${verb} ${formatCurrency(amount)} ${mode === 'credit' ? 'to' : 'from'} user ${data.topup_code}. New balance: ${formatCurrency(Number(data.new_balance))}`,
     )
     setTopupCode('')
-    setCreditAmount('')
+    setWalletAmount('')
     await refresh()
   }
 
@@ -69,11 +76,11 @@ export default function AdminUsersPage() {
     <div className="space-y-6 md:space-y-8">
       <PageHeader
         title="Users"
-        description="Manage users, credit wallets by top-up code, and view full user dashboards."
+        description="Manage users, credit or deduct wallets by top-up code, and view full user dashboards."
       />
 
-      <Panel title="Credit Wallet by Top-Up Code" description="User must have sent MoMo with their 5-digit code as reference.">
-        <div className="grid sm:grid-cols-3 gap-3 items-end max-w-2xl">
+      <Panel title="Adjust Wallet by Top-Up Code" description="Credit after MoMo top-up, or deduct balance when needed.">
+        <div className="grid sm:grid-cols-4 gap-3 items-end max-w-3xl">
           <div>
             <label className="text-xs font-medium text-muted-foreground">Top-Up Code</label>
             <input
@@ -90,24 +97,33 @@ export default function AdminUsersPage() {
               type="number"
               step="0.01"
               min="0.01"
-              value={creditAmount}
-              onChange={(e) => setCreditAmount(e.target.value)}
+              value={walletAmount}
+              onChange={(e) => setWalletAmount(e.target.value)}
               className="mt-1 w-full h-10 rounded-lg border border-white/10 bg-secondary/50 px-3 text-sm outline-none"
             />
           </div>
           <button
             type="button"
-            onClick={creditByCode}
-            disabled={crediting || topupCode.length !== 5}
+            onClick={() => void adjustByCode('credit')}
+            disabled={walletBusy || topupCode.length !== 5}
+            className="h-10 rounded-lg bg-emerald-500 text-white font-bold inline-flex items-center justify-center gap-2 disabled:opacity-60"
+          >
+            <Wallet className="h-4 w-4" />
+            {walletBusy ? 'Working…' : 'Credit'}
+          </button>
+          <button
+            type="button"
+            onClick={() => void adjustByCode('debit')}
+            disabled={walletBusy || topupCode.length !== 5}
             className="h-10 rounded-lg bg-red-500 text-white font-bold inline-flex items-center justify-center gap-2 disabled:opacity-60"
           >
             <Wallet className="h-4 w-4" />
-            {crediting ? 'Crediting…' : 'Credit'}
+            {walletBusy ? 'Working…' : 'Deduct'}
           </button>
         </div>
-        {creditMessage && (
-          <p className={`text-sm mt-3 ${creditMessage.startsWith('Credited') ? 'text-emerald-400' : 'text-destructive'}`}>
-            {creditMessage}
+        {walletMessage && (
+          <p className={`text-sm mt-3 ${walletMessage.startsWith('Credited') || walletMessage.startsWith('Deducted') ? 'text-emerald-400' : 'text-destructive'}`}>
+            {walletMessage}
           </p>
         )}
       </Panel>

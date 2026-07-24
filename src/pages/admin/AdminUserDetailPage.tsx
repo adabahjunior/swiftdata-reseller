@@ -13,14 +13,15 @@ export default function AdminUserDetailPage() {
   const { user: admin } = useAuth()
   const { profile, orders, transactions, keys, loading, refresh } = useAdminUserDetail(userId)
 
-  const [creditAmount, setCreditAmount] = useState('')
-  const [creditNote, setCreditNote] = useState('')
+  const [walletAmount, setWalletAmount] = useState('')
+  const [walletNote, setWalletNote] = useState('')
+  const [walletMode, setWalletMode] = useState<'credit' | 'debit'>('credit')
   const [message, setMessage] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
 
-  const creditWallet = async () => {
+  const adjustWallet = async () => {
     if (!admin || !userId) return
-    const amount = Number(creditAmount)
+    const amount = Number(walletAmount)
     if (!amount || amount <= 0) {
       setMessage('Enter a valid amount')
       return
@@ -28,21 +29,26 @@ export default function AdminUserDetailPage() {
     setSubmitting(true)
     setMessage(null)
 
-    const { data, error } = await supabase.rpc('admin_credit_wallet', {
+    const rpc = walletMode === 'credit' ? 'admin_credit_wallet' : 'admin_debit_wallet'
+    const defaultNote =
+      walletMode === 'credit' ? 'Manual top-up credited by admin' : 'Wallet deducted by admin'
+
+    const { data, error } = await supabase.rpc(rpc, {
       p_admin_id: admin.id,
       p_amount: amount,
       p_user_id: userId,
-      p_note: creditNote.trim() || `Manual top-up credited by admin`,
+      p_note: walletNote.trim() || defaultNote,
     })
 
     setSubmitting(false)
     if (error || !data?.success) {
-      setMessage(error?.message ?? data?.error ?? 'Credit failed')
+      setMessage(error?.message ?? data?.error ?? `${walletMode === 'credit' ? 'Credit' : 'Deduct'} failed`)
       return
     }
-    setCreditAmount('')
-    setCreditNote('')
-    setMessage(`Credited ${formatCurrency(amount)}. New balance: ${formatCurrency(Number(data.new_balance))}`)
+    setWalletAmount('')
+    setWalletNote('')
+    const verb = walletMode === 'credit' ? 'Credited' : 'Deducted'
+    setMessage(`${verb} ${formatCurrency(amount)}. New balance: ${formatCurrency(Number(data.new_balance))}`)
     await refresh()
   }
 
@@ -116,7 +122,7 @@ export default function AdminUserDetailPage() {
       </div>
 
       {message && (
-        <p className={`text-sm rounded-lg px-4 py-3 border ${message.includes('Credited') || message.includes('New key') || message.includes('New API') ? 'text-emerald-400 border-emerald-500/30 bg-emerald-500/5' : 'text-destructive border-destructive/30 bg-destructive/5'}`}>
+        <p className={`text-sm rounded-lg px-4 py-3 border ${message.includes('Credited') || message.includes('Deducted') || message.includes('New key') || message.includes('New API') ? 'text-emerald-400 border-emerald-500/30 bg-emerald-500/5' : 'text-destructive border-destructive/30 bg-destructive/5'}`}>
           {message}
         </p>
       )}
@@ -129,35 +135,63 @@ export default function AdminUserDetailPage() {
       </div>
 
       <div className="grid lg:grid-cols-2 gap-4">
-        <Panel title="Credit Wallet" description="Search by code on Users page, or credit directly here.">
+        <Panel title="Adjust Wallet" description="Credit or deduct this user's API balance. Deducts are blocked if balance is insufficient.">
           <div className="space-y-3">
             <div className="rounded-lg border border-primary/20 bg-primary/5 px-3 py-2">
               <p className="text-xs text-muted-foreground">Top-up code</p>
               <p className="font-mono font-black text-2xl text-primary tracking-widest">{profile.topup_code}</p>
+            </div>
+            <div className="flex gap-2 p-1 rounded-xl border border-white/10 bg-white/[0.02]">
+              <button
+                type="button"
+                onClick={() => setWalletMode('credit')}
+                className={`flex-1 h-9 rounded-lg text-sm font-bold transition-colors ${
+                  walletMode === 'credit' ? 'bg-emerald-500 text-white' : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                Credit
+              </button>
+              <button
+                type="button"
+                onClick={() => setWalletMode('debit')}
+                className={`flex-1 h-9 rounded-lg text-sm font-bold transition-colors ${
+                  walletMode === 'debit' ? 'bg-red-500 text-white' : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                Deduct
+              </button>
             </div>
             <input
               type="number"
               step="0.01"
               min="0.01"
               placeholder="Amount (GHS)"
-              value={creditAmount}
-              onChange={(e) => setCreditAmount(e.target.value)}
+              value={walletAmount}
+              onChange={(e) => setWalletAmount(e.target.value)}
               className="w-full h-10 rounded-lg border border-white/10 bg-secondary/50 px-3 text-sm outline-none"
             />
             <input
               placeholder="Note (optional)"
-              value={creditNote}
-              onChange={(e) => setCreditNote(e.target.value)}
+              value={walletNote}
+              onChange={(e) => setWalletNote(e.target.value)}
               className="w-full h-10 rounded-lg border border-white/10 bg-secondary/50 px-3 text-sm outline-none"
             />
             <button
               type="button"
-              onClick={creditWallet}
+              onClick={() => void adjustWallet()}
               disabled={submitting}
-              className="w-full h-10 rounded-lg bg-red-500 text-white font-bold inline-flex items-center justify-center gap-2 disabled:opacity-60"
+              className={`w-full h-10 rounded-lg text-white font-bold inline-flex items-center justify-center gap-2 disabled:opacity-60 ${
+                walletMode === 'credit' ? 'bg-emerald-500' : 'bg-red-500'
+              }`}
             >
               <Wallet className="h-4 w-4" />
-              {submitting ? 'Crediting…' : 'Credit Wallet'}
+              {submitting
+                ? walletMode === 'credit'
+                  ? 'Crediting…'
+                  : 'Deducting…'
+                : walletMode === 'credit'
+                  ? 'Credit Wallet'
+                  : 'Deduct Wallet'}
             </button>
           </div>
         </Panel>

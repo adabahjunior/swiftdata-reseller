@@ -102,8 +102,8 @@ export default function PlaceOrderPage() {
 
     setMessage(`Order placed — ${data.order.reference} (${data.order.status})`)
     setPhone('')
+    // Single-order path only — avoid also calling /process (duplicate provider purchases)
     if (data.order?.id) void triggerOrderFulfillment(data.order.id)
-    triggerProviderFulfillment()
     await refreshProfile()
   }
 
