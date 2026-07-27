@@ -73,6 +73,19 @@ function triggerProviderFulfillment(orderId?: string) {
   })
 }
 
+function triggerSmsDispatch() {
+  const base = Deno.env.get('SUPABASE_URL')
+  const key = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
+  if (!base || !key) return
+
+  void fetch(`${base}/functions/v1/send-sms/process`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${key}` },
+  }).catch(() => {
+    /* background */
+  })
+}
+
 function error(message: string, status = 400) {
   return json({ success: false, error: message }, status)
 }
@@ -188,9 +201,11 @@ Deno.serve(async (req) => {
         if (buyError) {
           statusCode = 500
           responseBody = { success: false, error: buyError.message }
+          triggerSmsDispatch()
         } else if (!result?.success) {
           statusCode = 400
           responseBody = result
+          triggerSmsDispatch()
         } else {
           responseBody = {
             success: true,
@@ -199,6 +214,7 @@ Deno.serve(async (req) => {
           const orderId = (result.order as Record<string, unknown>)?.id
           if (orderId) triggerProviderFulfillment(String(orderId))
           else triggerProviderFulfillment()
+          triggerSmsDispatch()
         }
       }
     } else if (path === '/v1/verify-number' && req.method === 'POST') {

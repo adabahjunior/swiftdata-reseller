@@ -11,6 +11,7 @@ export interface Profile {
   topup_code: string
   is_active: boolean
   api_enabled: boolean
+  low_balance_threshold: number | null
   created_at: string
   updated_at: string
 }
@@ -280,6 +281,7 @@ export interface AppUser {
   topup_code: string
   is_active: boolean
   api_enabled: boolean
+  low_balance_threshold: number | null
 }
 
 export function profileToAppUser(profile: Profile, email: string): AppUser {
@@ -294,5 +296,7 @@ export function profileToAppUser(profile: Profile, email: string): AppUser {
     topup_code: profile.topup_code ?? '',
     is_active: profile.is_active ?? true,
     api_enabled: profile.api_enabled ?? true,
+    low_balance_threshold:
+      profile.low_balance_threshold == null ? null : Number(profile.low_balance_threshold),
   }
 }

@@ -6,6 +6,7 @@ import { useAuth } from '../../context/AuthContext'
 import { useAdminUsers } from '../../hooks/useAdminData'
 import { supabase } from '../../lib/supabase'
 import { formatCurrency, formatDate } from '../../lib/format'
+import { triggerSmsDispatch } from '../../lib/smsDispatch'
 
 export default function AdminUsersPage() {
   const { user: currentUser } = useAuth()
@@ -60,6 +61,7 @@ export default function AdminUsersPage() {
     )
     setTopupCode('')
     setWalletAmount('')
+    triggerSmsDispatch()
     await refresh()
   }
 

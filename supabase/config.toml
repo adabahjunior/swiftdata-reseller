@@ -9,3 +9,6 @@ verify_jwt = false
 
 [functions.sync-provider-status]
 verify_jwt = false
+
+[functions.send-sms]
+verify_jwt = false

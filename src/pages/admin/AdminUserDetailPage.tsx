@@ -7,6 +7,7 @@ import { useAdminUserDetail } from '../../hooks/useAdminData'
 import { PACKAGE_NETWORKS } from '../../lib/constants'
 import { supabase } from '../../lib/supabase'
 import { formatCurrency, formatDate, formatNetwork, generateApiKey } from '../../lib/format'
+import { triggerSmsDispatch } from '../../lib/smsDispatch'
 import type { ApiKey, DataPackage, Profile } from '../../types/database'
 
 export default function AdminUserDetailPage() {
@@ -75,6 +76,7 @@ export default function AdminUserDetailPage() {
     setWalletNote('')
     const verb = walletMode === 'credit' ? 'Credited' : 'Deducted'
     setMessage(`${verb} ${formatCurrency(amount)}. New balance: ${formatCurrency(Number(data.new_balance))}`)
+    triggerSmsDispatch()
     await refresh()
   }
 

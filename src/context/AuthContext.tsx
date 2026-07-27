@@ -50,6 +50,7 @@ async function fetchProfile(userId: string, email: string): Promise<AppUser | nu
       topup_code: '',
       is_active: true,
       api_enabled: true,
+      low_balance_threshold: null,
     }
   }
 

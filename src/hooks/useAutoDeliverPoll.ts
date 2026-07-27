@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { triggerProviderFulfillment } from '../lib/providerFulfillment'
 import { triggerProviderStatusSync } from '../lib/providerStatusSync'
+import { triggerSmsDispatch } from '../lib/smsDispatch'
 import { supabase } from '../lib/supabase'
 
 const POLL_MS = 15_000
@@ -14,6 +15,7 @@ export function useAutoDeliverPoll(enabled = true) {
       void supabase.rpc('auto_deliver_pending_orders')
       triggerProviderFulfillment()
       triggerProviderStatusSync()
+      triggerSmsDispatch()
     }
 
     run()

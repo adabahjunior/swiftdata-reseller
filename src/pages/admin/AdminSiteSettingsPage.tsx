@@ -142,7 +142,7 @@ export default function AdminSiteSettingsPage() {
       )
     }
 
-    if (setting.key === 'maintenance_mode' || setting.key === 'api_enabled' || setting.key === 'provider_fulfillment_enabled' || setting.key === 'provider_status_sync_enabled') {
+    if (setting.key === 'maintenance_mode' || setting.key === 'api_enabled' || setting.key === 'provider_fulfillment_enabled' || setting.key === 'provider_status_sync_enabled' || setting.key === 'sms_enabled') {
       return (
         <select
           value={value}
@@ -152,6 +152,16 @@ export default function AdminSiteSettingsPage() {
           <option value="true">Enabled / True</option>
           <option value="false">Disabled / False</option>
         </select>
+      )
+    }
+
+    if (setting.key === 'sms_api_key') {
+      return (
+        <PasswordInput
+          value={value}
+          onChange={(e) => setDraft({ ...draft, [setting.key]: e.target.value })}
+          className="w-full h-10 rounded-lg border border-white/10 bg-secondary/50 px-3 text-sm outline-none"
+        />
       )
     }
 
@@ -370,6 +380,9 @@ export default function AdminSiteSettingsPage() {
             ['data_provider_primary_api_key', 'Primary Datahub API key (admin only)'],
             ['data_provider_secondary_api_key', 'Secondary SK Plug API token (admin only)'],
             ['min_topup_amount', 'Minimum wallet top-up in GHS'],
+            ['sms_enabled', 'Send SMS via TXTConnect (credit, failed orders, low balance)'],
+            ['sms_api_key', 'TXTConnect API key'],
+            ['sms_sender_id', 'TXTConnect sender ID (e.g. OrderInfo)'],
             ['platform_notice', 'Banner shown to users on login'],
           ].map(([key, desc]) => (
             <div key={key} className="rounded-lg border border-white/10 px-3 py-2">
