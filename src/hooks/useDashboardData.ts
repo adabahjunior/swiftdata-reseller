@@ -44,16 +44,39 @@ export function usePackages() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    supabase
-      .from('data_packages')
-      .select('*')
-      .eq('active', true)
-      .order('network')
-      .order('size_gb')
-      .then(({ data }) => {
-        setPackages((data as DataPackage[]) ?? [])
-        setLoading(false)
-      })
+    let cancelled = false
+
+    void (async () => {
+      const { data: sessionData } = await supabase.auth.getUser()
+      const userId = sessionData.user?.id
+      if (!userId) {
+        if (!cancelled) {
+          setPackages([])
+          setLoading(false)
+        }
+        return
+      }
+
+      const { data } = await supabase.rpc('get_packages_for_user', { p_user_id: userId })
+      if (cancelled) return
+
+      if (data?.success && Array.isArray(data.packages)) {
+        setPackages(data.packages as DataPackage[])
+      } else {
+        const { data: fallback } = await supabase
+          .from('data_packages')
+          .select('*')
+          .eq('active', true)
+          .order('network')
+          .order('size_gb')
+        setPackages((fallback as DataPackage[]) ?? [])
+      }
+      setLoading(false)
+    })()
+
+    return () => {
+      cancelled = true
+    }
   }, [])
 
   return { packages, loading }

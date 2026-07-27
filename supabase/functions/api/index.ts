@@ -130,17 +130,34 @@ Deno.serve(async (req) => {
         currency: 'GHS',
       }
     } else if (path === '/v1/packages' && req.method === 'GET') {
-      const { data: packages } = await supabase
-        .from('data_packages')
-        .select('network, size_gb, price, validity')
-        .eq('active', true)
-        .order('network')
-        .order('size_gb')
+      const [{ data: packages }, { data: overrides }] = await Promise.all([
+        supabase
+          .from('data_packages')
+          .select('id, network, size_gb, price, validity')
+          .eq('active', true)
+          .order('network')
+          .order('size_gb'),
+        supabase
+          .from('user_package_prices')
+          .select('package_id, price')
+          .eq('user_id', userId),
+      ])
+
+      const overrideMap = new Map(
+        (overrides ?? []).map((row) => [String(row.package_id), Number(row.price)]),
+      )
 
       responseBody = {
         success: true,
         networks: API_NETWORKS,
-        packages: (packages ?? []).map((p) => mapPackageToApi(p as Record<string, unknown>)),
+        packages: (packages ?? []).map((p) => {
+          const base = p as Record<string, unknown>
+          const custom = overrideMap.get(String(base.id))
+          return mapPackageToApi({
+            ...base,
+            price: custom ?? Number(base.price),
+          })
+        }),
       }
     } else if (path === '/v1/buy-data' && req.method === 'POST') {
       const body = await req.json()

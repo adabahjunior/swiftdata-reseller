@@ -1,12 +1,13 @@
 import { ArrowLeft, Key, RefreshCw, Shield, ShieldOff, Wallet } from 'lucide-react'
-import { useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { EmptyState, PageHeader, Panel, StatCard, StatusBadge } from '../../components/dashboard/ui'
 import { useAuth } from '../../context/AuthContext'
 import { useAdminUserDetail } from '../../hooks/useAdminData'
+import { PACKAGE_NETWORKS } from '../../lib/constants'
 import { supabase } from '../../lib/supabase'
 import { formatCurrency, formatDate, formatNetwork, generateApiKey } from '../../lib/format'
-import type { ApiKey, Profile } from '../../types/database'
+import type { ApiKey, DataPackage, Profile } from '../../types/database'
 
 export default function AdminUserDetailPage() {
   const { userId } = useParams<{ userId: string }>()
@@ -18,6 +19,31 @@ export default function AdminUserDetailPage() {
   const [walletMode, setWalletMode] = useState<'credit' | 'debit'>('credit')
   const [message, setMessage] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  const [userPackages, setUserPackages] = useState<DataPackage[]>([])
+  const [priceDrafts, setPriceDrafts] = useState<Record<string, string>>({})
+  const [packagesLoading, setPackagesLoading] = useState(true)
+  const [savingPackageId, setSavingPackageId] = useState<string | null>(null)
+
+  const loadUserPackages = useCallback(async () => {
+    if (!userId) return
+    setPackagesLoading(true)
+    const { data } = await supabase.rpc('get_packages_for_user', { p_user_id: userId })
+    if (data?.success && Array.isArray(data.packages)) {
+      const pkgs = data.packages as DataPackage[]
+      setUserPackages(pkgs)
+      setPriceDrafts(
+        Object.fromEntries(pkgs.map((p) => [p.id, String(Number(p.price))])),
+      )
+    } else {
+      setUserPackages([])
+      setPriceDrafts({})
+    }
+    setPackagesLoading(false)
+  }, [userId])
+
+  useEffect(() => {
+    void loadUserPackages()
+  }, [loadUserPackages])
 
   const adjustWallet = async () => {
     if (!admin || !userId) return
@@ -50,6 +76,59 @@ export default function AdminUserDetailPage() {
     const verb = walletMode === 'credit' ? 'Credited' : 'Deducted'
     setMessage(`${verb} ${formatCurrency(amount)}. New balance: ${formatCurrency(Number(data.new_balance))}`)
     await refresh()
+  }
+
+  const saveUserPackagePrice = async (pkg: DataPackage) => {
+    if (!admin || !userId) return
+    const amount = Number(priceDrafts[pkg.id])
+    if (Number.isNaN(amount) || amount < 0) {
+      setMessage('Enter a valid package price (0 or greater)')
+      return
+    }
+
+    setSavingPackageId(pkg.id)
+    setMessage(null)
+
+    const { data, error } = await supabase.rpc('admin_set_user_package_price', {
+      p_admin_id: admin.id,
+      p_user_id: userId,
+      p_package_id: pkg.id,
+      p_price: amount,
+    })
+
+    setSavingPackageId(null)
+    if (error || !data?.success) {
+      setMessage(error?.message ?? data?.error ?? 'Could not save package price')
+      return
+    }
+
+    setMessage(
+      `Saved custom price ${formatCurrency(amount)} for ${formatNetwork(pkg.network)} ${pkg.size_gb}GB (this user only).`,
+    )
+    await loadUserPackages()
+  }
+
+  const clearUserPackagePrice = async (pkg: DataPackage) => {
+    if (!admin || !userId) return
+    setSavingPackageId(pkg.id)
+    setMessage(null)
+
+    const { data, error } = await supabase.rpc('admin_clear_user_package_price', {
+      p_admin_id: admin.id,
+      p_user_id: userId,
+      p_package_id: pkg.id,
+    })
+
+    setSavingPackageId(null)
+    if (error || !data?.success) {
+      setMessage(error?.message ?? data?.error ?? 'Could not reset package price')
+      return
+    }
+
+    setMessage(
+      `Reset ${formatNetwork(pkg.network)} ${pkg.size_gb}GB to the catalog price for this user.`,
+    )
+    await loadUserPackages()
   }
 
   const toggleAccount = async (p: Profile) => {
@@ -122,7 +201,7 @@ export default function AdminUserDetailPage() {
       </div>
 
       {message && (
-        <p className={`text-sm rounded-lg px-4 py-3 border ${message.includes('Credited') || message.includes('Deducted') || message.includes('New key') || message.includes('New API') ? 'text-emerald-400 border-emerald-500/30 bg-emerald-500/5' : 'text-destructive border-destructive/30 bg-destructive/5'}`}>
+        <p className={`text-sm rounded-lg px-4 py-3 border ${message.includes('Credited') || message.includes('Deducted') || message.includes('Saved') || message.includes('Reset') || message.includes('New key') || message.includes('New API') ? 'text-emerald-400 border-emerald-500/30 bg-emerald-500/5' : 'text-destructive border-destructive/30 bg-destructive/5'}`}>
           {message}
         </p>
       )}
@@ -231,6 +310,87 @@ export default function AdminUserDetailPage() {
           </div>
         </Panel>
       </div>
+
+      <Panel
+        title="Custom package prices"
+        description="Override catalog prices for this user only. Other users keep the global Admin → Packages prices."
+      >
+        {packagesLoading ? (
+          <p className="text-sm text-muted-foreground">Loading packages…</p>
+        ) : userPackages.length === 0 ? (
+          <EmptyState
+            title="No active packages"
+            description="Add packages under Admin → Packages first."
+          />
+        ) : (
+          <div className="overflow-x-auto -mx-5 md:-mx-6">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-white/10 text-muted-foreground text-left">
+                  <th className="px-5 py-3 font-medium">Network</th>
+                  <th className="px-5 py-3 font-medium">Size</th>
+                  <th className="px-5 py-3 font-medium">Catalog</th>
+                  <th className="px-5 py-3 font-medium">This user</th>
+                  <th className="px-5 py-3 font-medium">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-white/10">
+                {userPackages.map((pkg) => {
+                  const networkLabel =
+                    PACKAGE_NETWORKS.find((n) => n.id === pkg.network)?.label ?? formatNetwork(pkg.network)
+                  const basePrice = Number(pkg.base_price ?? pkg.price)
+                  return (
+                    <tr key={pkg.id}>
+                      <td className="px-5 py-3">{networkLabel}</td>
+                      <td className="px-5 py-3">{pkg.size_gb} GB</td>
+                      <td className="px-5 py-3 text-muted-foreground">{formatCurrency(basePrice)}</td>
+                      <td className="px-5 py-3">
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            value={priceDrafts[pkg.id] ?? ''}
+                            onChange={(e) =>
+                              setPriceDrafts((prev) => ({ ...prev, [pkg.id]: e.target.value }))
+                            }
+                            className="w-28 h-9 rounded-lg border border-white/10 bg-secondary/50 px-3 text-sm outline-none"
+                          />
+                          {pkg.has_custom_price && (
+                            <span className="text-[10px] font-bold text-primary">Custom</span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-5 py-3">
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            disabled={savingPackageId === pkg.id}
+                            onClick={() => void saveUserPackagePrice(pkg)}
+                            className="h-8 px-3 rounded-lg bg-primary text-primary-foreground text-xs font-bold disabled:opacity-50"
+                          >
+                            {savingPackageId === pkg.id ? 'Saving…' : 'Save'}
+                          </button>
+                          {pkg.has_custom_price && (
+                            <button
+                              type="button"
+                              disabled={savingPackageId === pkg.id}
+                              onClick={() => void clearUserPackagePrice(pkg)}
+                              className="h-8 px-3 rounded-lg border border-white/10 text-xs font-bold hover:bg-white/5 disabled:opacity-50"
+                            >
+                              Reset
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Panel>
 
       <Panel
         title="API Keys"

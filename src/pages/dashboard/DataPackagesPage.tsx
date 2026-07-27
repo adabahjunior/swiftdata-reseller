@@ -41,7 +41,14 @@ export default function DataPackagesPage() {
                       <p className="font-black text-2xl">{pkg.size_gb} GB</p>
                       <p className="text-xs text-muted-foreground mt-0.5">{pkg.validity}</p>
                     </div>
-                    <p className="font-black text-lg">{formatCurrency(Number(pkg.price))}</p>
+                    <div className="text-right">
+                      <p className="font-black text-lg">{formatCurrency(Number(pkg.price))}</p>
+                      {pkg.has_custom_price && pkg.base_price != null && (
+                        <p className="text-[10px] text-primary mt-0.5">
+                          Custom · catalog {formatCurrency(Number(pkg.base_price))}
+                        </p>
+                      )}
+                    </div>
                   </div>
                   <p className="text-xs text-muted-foreground mt-3 font-mono">
                     network: {dbNetworkToApi(network)} · size_gb: {pkg.size_gb}

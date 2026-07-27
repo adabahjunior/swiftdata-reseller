@@ -23,6 +23,8 @@ export interface DataPackage {
   validity: string
   active: boolean
   created_at: string
+  base_price?: number
+  has_custom_price?: boolean
 }
 
 export interface ApiKey {
