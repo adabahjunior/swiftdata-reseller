@@ -17,6 +17,7 @@ import { useState } from 'react'
 import { useAuth } from '../../context/AuthContext'
 import { useAutoDeliverPoll } from '../../hooks/useAutoDeliverPoll'
 import { ADMIN_NAV_ITEMS, ADMIN_PAGE_TITLES } from '../../lib/adminConstants'
+import { AdminOrderTrackerFab } from './AdminOrderTrackerFab'
 
 const ICONS = {
   LayoutDashboard,
@@ -176,6 +177,7 @@ export function AdminLayout() {
           </div>
         </main>
       </div>
+      <AdminOrderTrackerFab />
     </div>
   )
 }
