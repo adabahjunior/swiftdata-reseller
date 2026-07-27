@@ -1,7 +1,12 @@
+import { RefreshCw } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { EmptyState, PageHeader, Panel, StatusBadge } from '../../components/dashboard/ui'
 import AdminOrderExportsPanel from '../../components/admin/AdminOrderExportsPanel'
+import { useAuth } from '../../context/AuthContext'
 import { useAdminOrders } from '../../hooks/useAdminData'
+import { deliveryStatusLabel, deliveryStatusTone } from '../../lib/deliveryStatus'
+import { triggerOrderFulfillment } from '../../lib/providerFulfillment'
+import { triggerProviderStatusSync } from '../../lib/providerStatusSync'
 import { supabase } from '../../lib/supabase'
 import { formatCurrency, formatDate, formatNetwork } from '../../lib/format'
 import type { Order } from '../../types/database'
@@ -15,10 +20,19 @@ const STATUS_LABELS: Record<Order['status'], string> = {
   failed: 'Failed',
 }
 
+const PROVIDER_TONE: Record<ReturnType<typeof deliveryStatusTone>, string> = {
+  success: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400',
+  warning: 'border-amber-500/30 bg-amber-500/10 text-amber-400',
+  danger: 'border-red-500/30 bg-red-500/10 text-red-400',
+  muted: 'border-white/10 bg-white/5 text-muted-foreground',
+}
+
 export default function AdminOrdersPage() {
+  const { user: admin } = useAuth()
   const { orders, loading, refresh } = useAdminOrders()
   const [statusFilter, setStatusFilter] = useState('all')
   const [updating, setUpdating] = useState<string | null>(null)
+  const [retryingId, setRetryingId] = useState<string | null>(null)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [bulkStatus, setBulkStatus] = useState<Order['status']>('completed')
   const [bulkUpdating, setBulkUpdating] = useState(false)
@@ -73,6 +87,79 @@ export default function AdminOrdersPage() {
     const { error } = await supabase.from('orders').update(payload).in('id', ids)
     if (error) throw error
   }
+
+  const retryOrder = async (orderId: string) => {
+    if (!admin) return
+    setRetryingId(orderId)
+    setMessage(null)
+
+    const { data, error } = await supabase.rpc('admin_retry_failed_order', {
+      p_admin_id: admin.id,
+      p_order_id: orderId,
+    })
+
+    setRetryingId(null)
+
+    if (error || !data?.success) {
+      setMessage(error?.message ?? data?.error ?? 'Retry failed')
+      return
+    }
+
+    setMessage(`Order ${data.order.reference} retried and queued for provider.`)
+    if (data.order?.id) void triggerOrderFulfillment(data.order.id)
+    triggerProviderStatusSync()
+    await refresh()
+  }
+
+  const retryFailedOrders = async (ids: string[]) => {
+    if (!admin || ids.length === 0) return
+
+    setBulkUpdating(true)
+    setMessage(null)
+
+    let succeeded = 0
+    let failed = 0
+    const errors: string[] = []
+
+    for (const orderId of ids) {
+      const { data, error } = await supabase.rpc('admin_retry_failed_order', {
+        p_admin_id: admin.id,
+        p_order_id: orderId,
+      })
+
+      if (error || !data?.success) {
+        failed += 1
+        errors.push(error?.message ?? data?.error ?? orderId)
+        continue
+      }
+
+      succeeded += 1
+      if (data.order?.id) void triggerOrderFulfillment(String(data.order.id))
+    }
+
+    triggerProviderStatusSync()
+    setBulkUpdating(false)
+    setSelected(new Set())
+
+    if (failed === 0) {
+      setMessage(`Retried ${succeeded} failed order(s) and queued them for the provider.`)
+    } else {
+      setMessage(
+        `Retried ${succeeded}, ${failed} failed. ${errors[0] ?? ''}`.trim(),
+      )
+    }
+    await refresh()
+  }
+
+  const failedIds = useMemo(
+    () => orders.filter((o) => o.status === 'failed').map((o) => o.id),
+    [orders],
+  )
+
+  const selectedFailedIds = useMemo(
+    () => [...selected].filter((id) => orders.some((o) => o.id === id && o.status === 'failed')),
+    [selected, orders],
+  )
 
   const updateStatus = async (orderId: string, status: Order['status']) => {
     setUpdating(orderId)
@@ -143,6 +230,22 @@ export default function AdminOrdersPage() {
             >
               Select all delivered
             </button>
+            <button
+              type="button"
+              onClick={() => selectByStatus('failed')}
+              className="h-10 px-3 rounded-lg border border-white/10 text-sm hover:bg-white/5"
+            >
+              Select all failed
+            </button>
+            <button
+              type="button"
+              disabled={bulkUpdating || failedIds.length === 0}
+              onClick={() => void retryFailedOrders(failedIds)}
+              className="h-10 px-3 rounded-lg border border-primary/30 bg-primary/10 text-primary text-sm font-bold hover:bg-primary/20 disabled:opacity-50 inline-flex items-center gap-1.5"
+            >
+              <RefreshCw className={`h-3.5 w-3.5 ${bulkUpdating ? 'animate-spin' : ''}`} />
+              {bulkUpdating ? 'Retrying…' : `Retry all failed (${failedIds.length})`}
+            </button>
             {selected.size > 0 && (
               <button
                 type="button"
@@ -192,11 +295,26 @@ export default function AdminOrdersPage() {
               >
                 Mark processing
               </button>
+              {selectedFailedIds.length > 0 && (
+                <button
+                  type="button"
+                  disabled={bulkUpdating}
+                  onClick={() => void retryFailedOrders(selectedFailedIds)}
+                  className="h-10 px-4 rounded-lg border border-primary/30 bg-primary/10 text-primary text-sm font-bold hover:bg-primary/20 disabled:opacity-50 inline-flex items-center gap-1.5"
+                >
+                  <RefreshCw className={`h-3.5 w-3.5 ${bulkUpdating ? 'animate-spin' : ''}`} />
+                  Retry selected failed ({selectedFailedIds.length})
+                </button>
+              )}
             </div>
           )}
 
           {message && (
-            <p className="text-sm text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 rounded-lg px-4 py-2">
+            <p className={`text-sm rounded-lg px-4 py-2 border ${
+              message.includes('failed') || message.includes('Insufficient') || message.includes('Unauthorized')
+                ? 'text-red-400 bg-red-500/10 border-red-500/20'
+                : 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20'
+            }`}>
               {message}
             </p>
           )}
@@ -272,19 +390,17 @@ export default function AdminOrdersPage() {
                       </span>
                     </td>
                     <td className="px-5 md:px-6 py-3">
-                      {order.provider_submitted_at ? (
+                      {order.provider_submitted_at || order.provider_status ? (
                         <div>
                           {order.provider_name && (
                             <p className="text-xs font-medium text-foreground/90 mb-1">{order.provider_name}</p>
                           )}
                           <span
                             className={`text-xs font-medium px-2 py-0.5 rounded-full border ${
-                              order.provider_status === 'submitted'
-                                ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400'
-                                : 'border-red-500/30 bg-red-500/10 text-red-400'
+                              PROVIDER_TONE[deliveryStatusTone(order)]
                             }`}
                           >
-                            {order.provider_status ?? 'sent'}
+                            {deliveryStatusLabel(order)}
                           </span>
                           {order.provider_error && (
                             <p className="text-[10px] text-red-400 mt-1 max-w-[140px] truncate" title={order.provider_error}>
@@ -293,7 +409,7 @@ export default function AdminOrdersPage() {
                           )}
                         </div>
                       ) : (
-                        <span className="text-xs text-muted-foreground">Pending</span>
+                        <span className="text-xs text-muted-foreground">Not sent</span>
                       )}
                     </td>
                     <td className="px-5 md:px-6 py-3">
@@ -310,18 +426,31 @@ export default function AdminOrdersPage() {
                       {formatDate(order.created_at)}
                     </td>
                     <td className="px-5 md:px-6 py-3">
-                      <select
-                        value={order.status}
-                        disabled={updating === order.id || bulkUpdating}
-                        onChange={(e) => updateStatus(order.id, e.target.value as Order['status'])}
-                        className="h-8 rounded-lg border border-white/10 bg-secondary/50 px-2 text-xs outline-none"
-                      >
-                        {ORDER_STATUSES.map((s) => (
-                          <option key={s} value={s}>
-                            {STATUS_LABELS[s]}
-                          </option>
-                        ))}
-                      </select>
+                      <div className="flex flex-col gap-2">
+                        <select
+                          value={order.status}
+                          disabled={updating === order.id || bulkUpdating || retryingId === order.id}
+                          onChange={(e) => updateStatus(order.id, e.target.value as Order['status'])}
+                          className="h-8 rounded-lg border border-white/10 bg-secondary/50 px-2 text-xs outline-none"
+                        >
+                          {ORDER_STATUSES.map((s) => (
+                            <option key={s} value={s}>
+                              {STATUS_LABELS[s]}
+                            </option>
+                          ))}
+                        </select>
+                        {order.status === 'failed' && (
+                          <button
+                            type="button"
+                            disabled={retryingId === order.id || bulkUpdating}
+                            onClick={() => void retryOrder(order.id)}
+                            className="inline-flex items-center justify-center gap-1.5 h-8 px-2 rounded-lg border border-primary/30 bg-primary/10 text-xs font-bold text-primary hover:bg-primary/20 disabled:opacity-50"
+                          >
+                            <RefreshCw className={`h-3.5 w-3.5 ${retryingId === order.id ? 'animate-spin' : ''}`} />
+                            Retry
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}

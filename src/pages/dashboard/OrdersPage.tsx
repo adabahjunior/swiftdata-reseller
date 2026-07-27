@@ -6,6 +6,7 @@ import { useAuth } from '../../context/AuthContext'
 import { useOrders } from '../../hooks/useDashboardData'
 import { PACKAGE_NETWORKS } from '../../lib/constants'
 import { formatCurrency, formatDate, formatNetwork } from '../../lib/format'
+import { deliveryStatusLabel } from '../../lib/deliveryStatus'
 import { triggerOrderFulfillment } from '../../lib/providerFulfillment'
 import { triggerProviderStatusSync } from '../../lib/providerStatusSync'
 import { supabase } from '../../lib/supabase'
@@ -125,8 +126,8 @@ export default function OrdersPage() {
                       {order.provider_status &&
                         order.status !== 'completed' &&
                         order.status !== 'failed' && (
-                          <p className="text-[10px] text-muted-foreground mt-1 capitalize">
-                            Live: {order.provider_status.replace(/_/g, ' ')}
+                          <p className="text-[10px] text-muted-foreground mt-1">
+                            Live: {deliveryStatusLabel(order)}
                           </p>
                         )}
                       {order.status === 'failed' && order.failure_reason === 'insufficient_balance' && (
