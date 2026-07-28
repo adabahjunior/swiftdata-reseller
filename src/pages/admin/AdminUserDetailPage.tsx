@@ -7,6 +7,8 @@ import { useAdminUserDetail } from '../../hooks/useAdminData'
 import { PACKAGE_NETWORKS } from '../../lib/constants'
 import { supabase } from '../../lib/supabase'
 import { formatCurrency, formatDate, formatNetwork, generateApiKey } from '../../lib/format'
+import { triggerOrderFulfillment } from '../../lib/providerFulfillment'
+import { triggerProviderStatusSync } from '../../lib/providerStatusSync'
 import { triggerSmsDispatch } from '../../lib/smsDispatch'
 import type { ApiKey, DataPackage, Profile } from '../../types/database'
 
@@ -24,6 +26,7 @@ export default function AdminUserDetailPage() {
   const [priceDrafts, setPriceDrafts] = useState<Record<string, string>>({})
   const [packagesLoading, setPackagesLoading] = useState(true)
   const [savingPackageId, setSavingPackageId] = useState<string | null>(null)
+  const [retryingOrderId, setRetryingOrderId] = useState<string | null>(null)
 
   const loadUserPackages = useCallback(async () => {
     if (!userId) return
@@ -133,6 +136,29 @@ export default function AdminUserDetailPage() {
     await loadUserPackages()
   }
 
+  const retryOrder = async (orderId: string) => {
+    if (!admin) return
+    setRetryingOrderId(orderId)
+    setMessage(null)
+
+    const { data, error } = await supabase.rpc('admin_retry_failed_order', {
+      p_admin_id: admin.id,
+      p_order_id: orderId,
+    })
+
+    setRetryingOrderId(null)
+
+    if (error || !data?.success) {
+      setMessage(error?.message ?? data?.error ?? 'Retry failed')
+      return
+    }
+
+    setMessage(`Order ${data.order.reference} retried and queued for provider.`)
+    if (data.order?.id) void triggerOrderFulfillment(String(data.order.id))
+    triggerProviderStatusSync()
+    await refresh()
+  }
+
   const toggleAccount = async (p: Profile) => {
     await supabase.from('profiles').update({ is_active: !p.is_active }).eq('id', p.id)
     await refresh()
@@ -203,7 +229,7 @@ export default function AdminUserDetailPage() {
       </div>
 
       {message && (
-        <p className={`text-sm rounded-lg px-4 py-3 border ${message.includes('Credited') || message.includes('Deducted') || message.includes('Saved') || message.includes('Reset') || message.includes('New key') || message.includes('New API') ? 'text-emerald-400 border-emerald-500/30 bg-emerald-500/5' : 'text-destructive border-destructive/30 bg-destructive/5'}`}>
+        <p className={`text-sm rounded-lg px-4 py-3 border ${message.includes('Credited') || message.includes('Deducted') || message.includes('Saved') || message.includes('Reset') || message.includes('retried') || message.includes('New key') || message.includes('New API') ? 'text-emerald-400 border-emerald-500/30 bg-emerald-500/5' : 'text-destructive border-destructive/30 bg-destructive/5'}`}>
           {message}
         </p>
       )}
@@ -455,6 +481,7 @@ export default function AdminUserDetailPage() {
                   <th className="px-5 py-3 font-medium">Size</th>
                   <th className="px-5 py-3 font-medium">Amount</th>
                   <th className="px-5 py-3 font-medium">Status</th>
+                  <th className="px-5 py-3 font-medium">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/10">
@@ -465,6 +492,21 @@ export default function AdminUserDetailPage() {
                     <td className="px-5 py-3">{o.size_gb} GB</td>
                     <td className="px-5 py-3 font-bold">{formatCurrency(Number(o.amount))}</td>
                     <td className="px-5 py-3"><StatusBadge status={o.status} /></td>
+                    <td className="px-5 py-3">
+                      {o.status === 'failed' ? (
+                        <button
+                          type="button"
+                          disabled={retryingOrderId === o.id}
+                          onClick={() => void retryOrder(o.id)}
+                          className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-primary/30 bg-primary/10 text-xs font-bold text-primary hover:bg-primary/20 disabled:opacity-50"
+                        >
+                          <RefreshCw className={`h-3.5 w-3.5 ${retryingOrderId === o.id ? 'animate-spin' : ''}`} />
+                          Retry
+                        </button>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">—</span>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>

@@ -1,10 +1,11 @@
-import { Radio, Search, X } from 'lucide-react'
+import { Radio, RefreshCw, Search, X } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { StatusBadge } from '../dashboard/ui'
 import { useAuth } from '../../context/AuthContext'
 import { deliveryStatusLabel, deliveryStatusTone } from '../../lib/deliveryStatus'
 import { formatCurrency, formatDate, formatNetwork } from '../../lib/format'
+import { triggerOrderFulfillment } from '../../lib/providerFulfillment'
 import { triggerProviderStatusSync } from '../../lib/providerStatusSync'
 import { supabase } from '../../lib/supabase'
 
@@ -47,6 +48,8 @@ export function AdminOrderTrackerFab() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [orders, setOrders] = useState<TrackedOrder[]>([])
+  const [retryingId, setRetryingId] = useState<string | null>(null)
+  const [retryMessage, setRetryMessage] = useState<string | null>(null)
 
   const fetchTracked = useCallback(
     async (opts: { query?: string; liveOnly?: boolean; showLoading?: boolean }) => {
@@ -99,6 +102,33 @@ export function AdminOrderTrackerFab() {
     setActiveQuery('')
     setOrders([])
     await fetchTracked({ liveOnly: true, showLoading: true })
+  }
+
+  const retryOrder = async (orderId: string) => {
+    if (!admin) return
+    setRetryingId(orderId)
+    setRetryMessage(null)
+
+    const { data, error: rpcError } = await supabase.rpc('admin_retry_failed_order', {
+      p_admin_id: admin.id,
+      p_order_id: orderId,
+    })
+
+    setRetryingId(null)
+
+    if (rpcError || !data?.success) {
+      setRetryMessage(rpcError?.message ?? data?.error ?? 'Retry failed')
+      return
+    }
+
+    setRetryMessage(`Order ${data.order.reference} retried and queued for provider.`)
+    if (data.order?.id) void triggerOrderFulfillment(String(data.order.id))
+    triggerProviderStatusSync()
+    if (mode === 'live') {
+      await fetchTracked({ liveOnly: true, showLoading: false })
+    } else if (activeQuery) {
+      await fetchTracked({ query: activeQuery, liveOnly: false, showLoading: false })
+    }
   }
 
   useEffect(() => {
@@ -259,6 +289,18 @@ export function AdminOrderTrackerFab() {
                 </p>
               )}
 
+              {retryMessage && (
+                <p
+                  className={`text-sm rounded-lg px-3 py-2 border ${
+                    retryMessage.includes('retried')
+                      ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20'
+                      : 'text-red-400 bg-red-500/10 border-red-500/20'
+                  }`}
+                >
+                  {retryMessage}
+                </p>
+              )}
+
               {loading && orders.length === 0 && (
                 <p className="text-sm text-muted-foreground">Loading…</p>
               )}
@@ -326,6 +368,17 @@ export function AdminOrderTrackerFab() {
                         </div>
                         {order.provider_error && order.status === 'failed' && (
                           <p className="text-[10px] text-red-400">{order.provider_error}</p>
+                        )}
+                        {order.status === 'failed' && (
+                          <button
+                            type="button"
+                            disabled={retryingId === order.id}
+                            onClick={() => void retryOrder(order.id)}
+                            className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-lg border border-primary/30 bg-primary/10 text-xs font-bold text-primary hover:bg-primary/20 disabled:opacity-50 w-full"
+                          >
+                            <RefreshCw className={`h-3.5 w-3.5 ${retryingId === order.id ? 'animate-spin' : ''}`} />
+                            Retry order
+                          </button>
                         )}
                         <p className="text-[10px] text-muted-foreground">
                           Placed {formatDate(order.created_at)}
