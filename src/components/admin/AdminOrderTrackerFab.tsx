@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { StatusBadge } from '../dashboard/ui'
 import { useAuth } from '../../context/AuthContext'
-import { deliveryStatusLabel, deliveryStatusTone } from '../../lib/deliveryStatus'
+import { canAdminRetryOrder, deliveryStatusLabel, deliveryStatusTone } from '../../lib/deliveryStatus'
 import { formatCurrency, formatDate, formatNetwork } from '../../lib/format'
 import { triggerOrderFulfillment } from '../../lib/providerFulfillment'
 import { triggerProviderStatusSync } from '../../lib/providerStatusSync'
@@ -366,10 +366,10 @@ export function AdminOrderTrackerFab() {
                               </span>
                             )}
                         </div>
-                        {order.provider_error && order.status === 'failed' && (
+                        {order.provider_error && canAdminRetryOrder(order) && (
                           <p className="text-[10px] text-red-400">{order.provider_error}</p>
                         )}
-                        {order.status === 'failed' && (
+                        {canAdminRetryOrder(order) && (
                           <button
                             type="button"
                             disabled={retryingId === order.id}

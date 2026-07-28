@@ -4,7 +4,7 @@ import { EmptyState, PageHeader, Panel, StatusBadge } from '../../components/das
 import AdminOrderExportsPanel from '../../components/admin/AdminOrderExportsPanel'
 import { useAuth } from '../../context/AuthContext'
 import { useAdminOrders } from '../../hooks/useAdminData'
-import { deliveryStatusLabel, deliveryStatusTone } from '../../lib/deliveryStatus'
+import { canAdminRetryOrder, deliveryStatusLabel, deliveryStatusTone } from '../../lib/deliveryStatus'
 import { triggerOrderFulfillment } from '../../lib/providerFulfillment'
 import { triggerProviderStatusSync } from '../../lib/providerStatusSync'
 import { supabase } from '../../lib/supabase'
@@ -142,7 +142,7 @@ export default function AdminOrdersPage() {
     setSelected(new Set())
 
     if (failed === 0) {
-      setMessage(`Retried ${succeeded} failed order(s) and queued them for the provider.`)
+      setMessage(`Retried ${succeeded} order(s) and queued them for the provider.`)
     } else {
       setMessage(
         `Retried ${succeeded}, ${failed} failed. ${errors[0] ?? ''}`.trim(),
@@ -151,15 +151,27 @@ export default function AdminOrdersPage() {
     await refresh()
   }
 
-  const failedIds = useMemo(
-    () => orders.filter((o) => o.status === 'failed').map((o) => o.id),
+  const retryableIds = useMemo(
+    () => orders.filter((o) => canAdminRetryOrder(o)).map((o) => o.id),
     [orders],
   )
 
-  const selectedFailedIds = useMemo(
-    () => [...selected].filter((id) => orders.some((o) => o.id === id && o.status === 'failed')),
+  const selectedRetryableIds = useMemo(
+    () => [...selected].filter((id) => orders.some((o) => o.id === id && canAdminRetryOrder(o))),
     [selected, orders],
   )
+
+  const selectProviderRejected = () => {
+    const ids = orders
+      .filter(
+        (o) =>
+          o.status === 'completed' &&
+          canAdminRetryOrder(o),
+      )
+      .map((o) => o.id)
+    setStatusFilter('completed')
+    setSelected(new Set(ids))
+  }
 
   const updateStatus = async (orderId: string, status: Order['status']) => {
     setUpdating(orderId)
@@ -239,12 +251,19 @@ export default function AdminOrdersPage() {
             </button>
             <button
               type="button"
-              disabled={bulkUpdating || failedIds.length === 0}
-              onClick={() => void retryFailedOrders(failedIds)}
+              onClick={selectProviderRejected}
+              className="h-10 px-3 rounded-lg border border-white/10 text-sm hover:bg-white/5"
+            >
+              Select delivered + provider rejected
+            </button>
+            <button
+              type="button"
+              disabled={bulkUpdating || retryableIds.length === 0}
+              onClick={() => void retryFailedOrders(retryableIds)}
               className="h-10 px-3 rounded-lg border border-primary/30 bg-primary/10 text-primary text-sm font-bold hover:bg-primary/20 disabled:opacity-50 inline-flex items-center gap-1.5"
             >
               <RefreshCw className={`h-3.5 w-3.5 ${bulkUpdating ? 'animate-spin' : ''}`} />
-              {bulkUpdating ? 'Retrying…' : `Retry all failed (${failedIds.length})`}
+              {bulkUpdating ? 'Retrying…' : `Retry all retryable (${retryableIds.length})`}
             </button>
             {selected.size > 0 && (
               <button
@@ -295,15 +314,15 @@ export default function AdminOrdersPage() {
               >
                 Mark processing
               </button>
-              {selectedFailedIds.length > 0 && (
+              {selectedRetryableIds.length > 0 && (
                 <button
                   type="button"
                   disabled={bulkUpdating}
-                  onClick={() => void retryFailedOrders(selectedFailedIds)}
+                  onClick={() => void retryFailedOrders(selectedRetryableIds)}
                   className="h-10 px-4 rounded-lg border border-primary/30 bg-primary/10 text-primary text-sm font-bold hover:bg-primary/20 disabled:opacity-50 inline-flex items-center gap-1.5"
                 >
                   <RefreshCw className={`h-3.5 w-3.5 ${bulkUpdating ? 'animate-spin' : ''}`} />
-                  Retry selected failed ({selectedFailedIds.length})
+                  Retry selected ({selectedRetryableIds.length})
                 </button>
               )}
             </div>
@@ -439,12 +458,17 @@ export default function AdminOrdersPage() {
                             </option>
                           ))}
                         </select>
-                        {order.status === 'failed' && (
+                        {canAdminRetryOrder(order) && (
                           <button
                             type="button"
                             disabled={retryingId === order.id || bulkUpdating}
                             onClick={() => void retryOrder(order.id)}
                             className="inline-flex items-center justify-center gap-1.5 h-8 px-2 rounded-lg border border-primary/30 bg-primary/10 text-xs font-bold text-primary hover:bg-primary/20 disabled:opacity-50"
+                            title={
+                              order.status === 'completed'
+                                ? 'Retry provider-rejected delivered order'
+                                : 'Retry failed order'
+                            }
                           >
                             <RefreshCw className={`h-3.5 w-3.5 ${retryingId === order.id ? 'animate-spin' : ''}`} />
                             Retry

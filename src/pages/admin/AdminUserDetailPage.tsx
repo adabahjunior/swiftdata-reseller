@@ -5,6 +5,7 @@ import { EmptyState, PageHeader, Panel, StatCard, StatusBadge } from '../../comp
 import { useAuth } from '../../context/AuthContext'
 import { useAdminUserDetail } from '../../hooks/useAdminData'
 import { PACKAGE_NETWORKS } from '../../lib/constants'
+import { canAdminRetryOrder } from '../../lib/deliveryStatus'
 import { supabase } from '../../lib/supabase'
 import { formatCurrency, formatDate, formatNetwork, generateApiKey } from '../../lib/format'
 import { triggerOrderFulfillment } from '../../lib/providerFulfillment'
@@ -493,12 +494,17 @@ export default function AdminUserDetailPage() {
                     <td className="px-5 py-3 font-bold">{formatCurrency(Number(o.amount))}</td>
                     <td className="px-5 py-3"><StatusBadge status={o.status} /></td>
                     <td className="px-5 py-3">
-                      {o.status === 'failed' ? (
+                      {canAdminRetryOrder(o) ? (
                         <button
                           type="button"
                           disabled={retryingOrderId === o.id}
                           onClick={() => void retryOrder(o.id)}
                           className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-primary/30 bg-primary/10 text-xs font-bold text-primary hover:bg-primary/20 disabled:opacity-50"
+                          title={
+                            o.status === 'completed'
+                              ? 'Retry provider-rejected delivered order'
+                              : 'Retry failed order'
+                          }
                         >
                           <RefreshCw className={`h-3.5 w-3.5 ${retryingOrderId === o.id ? 'animate-spin' : ''}`} />
                           Retry
