@@ -83,6 +83,99 @@ export const DOC_ENDPOINTS: DocEndpoint[] = [
 }`,
   },
   {
+    method: 'GET',
+    path: '/v1/utility-products',
+    title: 'List Utility Products',
+    description:
+      'Returns active Airtime / ECG / TV products. Optional ?type=airtime|ecg|tv filter.',
+    response: `{
+  "success": true,
+  "products": [
+    {
+      "service_type": "airtime",
+      "provider_code": "MTN",
+      "label": "MTN Airtime",
+      "min_amount": 1,
+      "max_amount": 500,
+      "markup_percent": 0,
+      "flat_fee": 0
+    }
+  ]
+}`,
+  },
+  {
+    method: 'POST',
+    path: '/v1/buy-airtime',
+    title: 'Buy Airtime',
+    description: 'Top up a Ghana mobile number via Xcel. Deducts wallet (face amount + markup/fees).',
+    body: `{
+  "phone": "0241234567",
+  "provider_code": "MTN",
+  "amount": 10,
+  "reference": "optional-custom-ref"
+}`,
+    response: `{
+  "success": true,
+  "order": {
+    "reference": "UTL-ABC123XYZ",
+    "service_type": "airtime",
+    "provider_code": "MTN",
+    "beneficiary": "0241234567",
+    "face_amount": 10,
+    "amount": 10,
+    "status": "pending"
+  }
+}`,
+  },
+  {
+    method: 'POST',
+    path: '/v1/buy-ecg',
+    title: 'Pay ECG',
+    description: 'Pay ECG prepaid/postpaid. On success, utility_meta.token may contain the prepaid token.',
+    body: `{
+  "meter": "70012236413",
+  "provider_code": "ecg2",
+  "amount": 20,
+  "account_name": "Customer Name"
+}`,
+    response: `{
+  "success": true,
+  "order": {
+    "reference": "UTL-ECG123",
+    "service_type": "ecg",
+    "provider_code": "ecg2",
+    "beneficiary": "70012236413",
+    "face_amount": 20,
+    "amount": 20,
+    "status": "pending"
+  }
+}`,
+  },
+  {
+    method: 'POST',
+    path: '/v1/buy-tv',
+    title: 'TV Subscription Payment',
+    description: 'Pay DSTV / GOtv / StarTimes / Box Office smartcard via Xcel.',
+    body: `{
+  "smartcard": "8059853119",
+  "provider_code": "DSTV",
+  "amount": 50,
+  "account_name": "Customer Name"
+}`,
+    response: `{
+  "success": true,
+  "order": {
+    "reference": "UTL-TV123",
+    "service_type": "tv",
+    "provider_code": "DSTV",
+    "beneficiary": "8059853119",
+    "face_amount": 50,
+    "amount": 50,
+    "status": "pending"
+  }
+}`,
+  },
+  {
     method: 'POST',
     path: '/v1/verify-number',
     title: 'Verify Number(s)',

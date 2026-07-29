@@ -7,6 +7,10 @@ import { formatRelativeTime } from '../../lib/format'
 const ENDPOINTS = [
   { path: '/v1/health', method: 'GET', description: 'API health and supported networks' },
   { path: '/v1/buy-data', method: 'POST', description: 'Purchase a data bundle' },
+  { path: '/v1/buy-airtime', method: 'POST', description: 'Buy airtime via Xcel' },
+  { path: '/v1/buy-ecg', method: 'POST', description: 'Pay ECG via Xcel' },
+  { path: '/v1/buy-tv', method: 'POST', description: 'Pay TV subscription via Xcel' },
+  { path: '/v1/utility-products', method: 'GET', description: 'List airtime / ECG / TV products' },
   { path: '/v1/balance', method: 'GET', description: 'Check API wallet balance' },
   { path: '/v1/orders', method: 'GET', description: 'List your orders' },
   { path: '/v1/orders/{id}', method: 'GET', description: 'Get order by reference' },

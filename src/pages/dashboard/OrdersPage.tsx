@@ -1,4 +1,4 @@
-import { RefreshCw } from 'lucide-react'
+import { RefreshCw, Search } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { EmptyState, PageHeader, Panel, StatusBadge } from '../../components/dashboard/ui'
@@ -16,16 +16,24 @@ export default function OrdersPage() {
   const { orders, loading, refresh } = useOrders()
   const [statusFilter, setStatusFilter] = useState<string>('all')
   const [networkFilter, setNetworkFilter] = useState<string>('all')
+  const [phoneSearch, setPhoneSearch] = useState('')
   const [retryingId, setRetryingId] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
 
   const filtered = useMemo(() => {
+    const q = phoneSearch.trim().replace(/\D/g, '')
     return orders.filter((order) => {
       if (statusFilter !== 'all' && order.status !== statusFilter) return false
       if (networkFilter !== 'all' && order.network !== networkFilter) return false
+      if (q) {
+        const phoneDigits = order.phone.replace(/\D/g, '')
+        if (!phoneDigits.includes(q) && !order.phone.includes(phoneSearch.trim())) {
+          return false
+        }
+      }
       return true
     })
-  }, [orders, statusFilter, networkFilter])
+  }, [orders, statusFilter, networkFilter, phoneSearch])
 
   const retryOrder = async (orderId: string) => {
     if (!user) return
@@ -66,6 +74,15 @@ export default function OrdersPage() {
 
       <Panel title="Order History" description={`${filtered.length} order(s)`}>
         <div className="flex flex-wrap gap-3 mb-6">
+          <div className="relative min-w-[200px] flex-1 max-w-xs">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <input
+              value={phoneSearch}
+              onChange={(e) => setPhoneSearch(e.target.value)}
+              placeholder="Search by phone…"
+              className="w-full h-10 rounded-lg border border-white/10 bg-secondary/50 pl-9 pr-3 text-sm outline-none"
+            />
+          </div>
           <select
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value)}
@@ -96,7 +113,11 @@ export default function OrdersPage() {
         ) : filtered.length === 0 ? (
           <EmptyState
             title="No orders found"
-            description="Orders created via the API will show up here with status, network, and delivery details."
+            description={
+              phoneSearch.trim()
+                ? 'No orders match that phone number. Try another number or clear the search.'
+                : 'Orders created via the API will show up here with status, network, and delivery details.'
+            }
           />
         ) : (
           <div className="overflow-x-auto -mx-5 md:-mx-6">

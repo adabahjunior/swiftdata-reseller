@@ -64,6 +64,10 @@ export interface Order {
   provider_submitted_at: string | null
   provider_name: string | null
   provider_type: string | null
+  service_type?: 'data' | 'airtime' | 'ecg' | 'tv'
+  utility_product_id?: string | null
+  face_amount?: number | null
+  utility_meta?: Record<string, unknown>
 }
 
 export interface SupportContact {

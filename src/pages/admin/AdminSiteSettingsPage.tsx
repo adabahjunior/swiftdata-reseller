@@ -16,6 +16,20 @@ const PROVIDER_SETTING_KEYS = new Set([
   'data_provider_secondary_type',
 ])
 
+const XCEL_SETTING_KEYS = new Set([
+  'xcel_enabled',
+  'xcel_api_base',
+  'xcel_dl_code_path',
+  'xcel_buy_path',
+  'xcel_user_id',
+  'xcel_pin',
+  'xcel_from_acct',
+  'xcel_hmac_secret',
+  'xcel_api_key',
+  'xcel_default_merchant_id',
+  'xcel_biller_channel',
+])
+
 export default function AdminSiteSettingsPage() {
   const { user } = useAuth()
   const { settings, loading, refresh } = useSiteSettings()
@@ -108,6 +122,44 @@ export default function AdminSiteSettingsPage() {
     await refresh()
   }
 
+  const handleSaveXcel = async () => {
+    if (!user) return
+    setSaving(true)
+    setMessage(null)
+
+    const xcelUpdates: Array<[string, string, string]> = [
+      ['xcel_enabled', getValue('xcel_enabled', 'false'), 'Enable Xcel Airtime / ECG / TV fulfillment'],
+      ['xcel_api_base', getValue('xcel_api_base', 'https://api.xcelapp.com'), 'Xcel API base URL'],
+      ['xcel_dl_code_path', getValue('xcel_dl_code_path', '/partners/momo/dl-code'), 'Xcel DL-code path'],
+      ['xcel_buy_path', getValue('xcel_buy_path', '/partners/utilities/buy'), 'Xcel utilities buy path'],
+      ['xcel_user_id', getValue('xcel_user_id'), 'Xcel partner user_id'],
+      ['xcel_pin', getValue('xcel_pin'), 'Xcel partner PIN'],
+      ['xcel_from_acct', getValue('xcel_from_acct'), 'Xcel debit/from account number'],
+      ['xcel_hmac_secret', getValue('xcel_hmac_secret'), 'Xcel HMAC / API secret'],
+      ['xcel_api_key', getValue('xcel_api_key'), 'Xcel API key (Authorization header if required)'],
+      ['xcel_default_merchant_id', getValue('xcel_default_merchant_id'), 'Default Xcel merchant ID (from VAS list)'],
+      ['xcel_biller_channel', getValue('xcel_biller_channel', 'FUNDGATE'), 'Xcel biller_channel'],
+    ]
+
+    for (const [key, value, label] of xcelUpdates) {
+      const ok = await upsertSetting(key, value, label)
+      if (!ok) {
+        setSaving(false)
+        setMessage(`Failed to save ${key}`)
+        return
+      }
+    }
+
+    setDraft((prev) => {
+      const next = { ...prev }
+      for (const [key] of xcelUpdates) delete next[key]
+      return next
+    })
+    setSaving(false)
+    setMessage('Xcel utility settings saved.')
+    await refresh()
+  }
+
   const renderInput = (setting: { key: string; value: string; label: string | null }) => {
     const value = getValue(setting.key, setting.value)
 
@@ -142,7 +194,7 @@ export default function AdminSiteSettingsPage() {
       )
     }
 
-    if (setting.key === 'maintenance_mode' || setting.key === 'api_enabled' || setting.key === 'provider_fulfillment_enabled' || setting.key === 'provider_status_sync_enabled' || setting.key === 'sms_enabled') {
+    if (setting.key === 'maintenance_mode' || setting.key === 'api_enabled' || setting.key === 'provider_fulfillment_enabled' || setting.key === 'provider_status_sync_enabled' || setting.key === 'sms_enabled' || setting.key === 'xcel_enabled') {
       return (
         <select
           value={value}
@@ -155,7 +207,7 @@ export default function AdminSiteSettingsPage() {
       )
     }
 
-    if (setting.key === 'sms_api_key') {
+    if (setting.key === 'sms_api_key' || setting.key === 'xcel_pin' || setting.key === 'xcel_hmac_secret' || setting.key === 'xcel_api_key') {
       return (
         <PasswordInput
           value={value}
@@ -185,7 +237,10 @@ export default function AdminSiteSettingsPage() {
     )
   }
 
-  const generalSettings = settings.filter((s) => !PROVIDER_SETTING_KEYS.has(s.key))
+  const generalSettings = settings.filter(
+    (s) => !PROVIDER_SETTING_KEYS.has(s.key) && !XCEL_SETTING_KEYS.has(s.key),
+  )
+  const xcelSettings = settings.filter((s) => XCEL_SETTING_KEYS.has(s.key))
   const activeProvider = getValue('active_data_provider', 'primary')
   const primaryName = getValue('data_provider_primary_name', 'Primary Datahub')
   const secondaryName = getValue('data_provider_secondary_name', 'SK Plug')
@@ -320,6 +375,42 @@ export default function AdminSiteSettingsPage() {
       </Panel>
 
       <Panel
+        title="Xcel Utilities (Airtime / ECG / TV)"
+        description="Credentials from your Xcel partner portal and VAS list. Docs: https://docs.xcelapp.com — buy endpoint POST /partners/utilities/buy."
+      >
+        {loading ? (
+          <p className="text-sm text-muted-foreground">Loading Xcel settings…</p>
+        ) : (
+          <div className="space-y-5 max-w-2xl">
+            {(xcelSettings.length > 0
+              ? xcelSettings
+              : [...XCEL_SETTING_KEYS].map((key) => ({
+                  key,
+                  value: '',
+                  label: key,
+                }))
+            ).map((setting) => (
+              <div key={setting.key}>
+                <label className="text-sm font-medium text-foreground/80">
+                  {setting.label ?? setting.key}
+                </label>
+                <p className="text-[10px] text-muted-foreground font-mono mb-1.5">{setting.key}</p>
+                {renderInput(setting)}
+              </div>
+            ))}
+            <button
+              type="button"
+              onClick={() => void handleSaveXcel()}
+              disabled={saving || loading}
+              className="h-10 px-5 rounded-lg bg-red-500 text-white text-sm font-bold disabled:opacity-60"
+            >
+              {saving ? 'Saving…' : 'Save Xcel Settings'}
+            </button>
+          </div>
+        )}
+      </Panel>
+
+      <Panel
         title="Live order status (Datahub)"
         description="Register this webhook URL in your Datahub API docs (Webhooks tab) for instant updates. We also poll order status every 15 seconds when sync is enabled."
       >
@@ -383,6 +474,10 @@ export default function AdminSiteSettingsPage() {
             ['sms_enabled', 'Send SMS via TXTConnect (credit, failed orders, low balance)'],
             ['sms_api_key', 'TXTConnect API key'],
             ['sms_sender_id', 'TXTConnect sender ID (e.g. OrderInfo)'],
+            ['xcel_enabled', 'Enable Airtime / ECG / TV via Xcel'],
+            ['xcel_user_id', 'Xcel partner user_id'],
+            ['xcel_from_acct', 'Xcel from_acct wallet'],
+            ['xcel_default_merchant_id', 'Default merchant ID from VAS list'],
             ['platform_notice', 'Banner shown to users on login'],
           ].map(([key, desc]) => (
             <div key={key} className="rounded-lg border border-white/10 px-3 py-2">

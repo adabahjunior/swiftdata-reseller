@@ -14,6 +14,7 @@ import {
   ShoppingBag,
   Wallet,
   X,
+  Zap,
 } from 'lucide-react'
 import { Link, useLocation } from 'react-router-dom'
 import { NAV_ITEMS } from '../../lib/constants'
@@ -31,6 +32,7 @@ const ICONS = {
   Settings,
   ShieldCheck,
   MessageCircle,
+  Zap,
 }
 
 interface SidebarProps {

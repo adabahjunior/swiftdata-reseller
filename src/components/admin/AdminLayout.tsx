@@ -11,6 +11,7 @@ import {
   ShoppingBag,
   Users,
   X,
+  Zap,
 } from 'lucide-react'
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useState } from 'react'
@@ -28,6 +29,7 @@ const ICONS = {
   Settings,
   ShieldCheck,
   MessageCircle,
+  Zap,
 }
 
 function AdminSidebar({

@@ -27,9 +27,25 @@ function apiNetworkLabel(apiNetwork: string): string {
 }
 
 function mapOrderToApi(order: Record<string, unknown>) {
+  const serviceType = String(order.service_type ?? 'data')
+  if (serviceType !== 'data') {
+    return {
+      reference: order.reference,
+      service_type: serviceType,
+      provider_code: order.network,
+      beneficiary: order.phone,
+      face_amount: order.face_amount != null ? Number(order.face_amount) : null,
+      amount: Number(order.amount),
+      status: order.status,
+      created_at: order.created_at,
+      completed_at: order.completed_at,
+      utility_meta: order.utility_meta ?? {},
+    }
+  }
   const apiNetwork = dbToApiNetwork(String(order.network))
   return {
     reference: order.reference,
+    service_type: 'data',
     phone: order.phone,
     network: apiNetwork,
     network_label: apiNetworkLabel(apiNetwork),
@@ -66,6 +82,20 @@ function triggerProviderFulfillment(orderId?: string) {
 
   const path = orderId ? `/order/${orderId}` : '/process'
   void fetch(`${base}/functions/v1/fulfill-orders${path}`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${key}` },
+  }).catch(() => {
+    /* background */
+  })
+}
+
+function triggerXcelFulfillment(orderId?: string) {
+  const base = Deno.env.get('SUPABASE_URL')
+  const key = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
+  if (!base || !key) return
+
+  const path = orderId ? `/order/${orderId}` : '/process'
+  void fetch(`${base}/functions/v1/fulfill-xcel-orders${path}`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${key}` },
   }).catch(() => {
@@ -217,6 +247,102 @@ Deno.serve(async (req) => {
           triggerSmsDispatch()
         }
       }
+    } else if (path === '/v1/utility-products' && req.method === 'GET') {
+      const serviceType = (url.searchParams.get('type') || '').trim().toLowerCase()
+      let query = supabase
+        .from('utility_products')
+        .select(
+          'service_type, provider_code, label, min_amount, max_amount, markup_percent, flat_fee',
+        )
+        .eq('active', true)
+        .order('service_type')
+        .order('display_order')
+      if (['airtime', 'ecg', 'tv'].includes(serviceType)) {
+        query = query.eq('service_type', serviceType)
+      }
+      const { data: products } = await query
+      responseBody = {
+        success: true,
+        products: (products ?? []).map((p) => ({
+          service_type: p.service_type,
+          provider_code: p.provider_code,
+          label: p.label,
+          min_amount: Number(p.min_amount),
+          max_amount: Number(p.max_amount),
+          markup_percent: Number(p.markup_percent),
+          flat_fee: Number(p.flat_fee),
+        })),
+      }
+    } else if (
+      (path === '/v1/buy-airtime' || path === '/v1/buy-ecg' || path === '/v1/buy-tv' || path === '/v1/buy-utility') &&
+      req.method === 'POST'
+    ) {
+      const body = await req.json().catch(() => ({}))
+      const serviceType =
+        path === '/v1/buy-airtime'
+          ? 'airtime'
+          : path === '/v1/buy-ecg'
+            ? 'ecg'
+            : path === '/v1/buy-tv'
+              ? 'tv'
+              : String(body.service_type ?? '').trim().toLowerCase()
+      const providerCode = String(body.provider_code ?? body.network ?? '').trim()
+      const beneficiary = String(body.beneficiary ?? body.phone ?? body.meter ?? body.smartcard ?? '').trim()
+      const faceAmount = Number(body.amount ?? body.face_amount)
+      const reference = body.reference ? String(body.reference).trim() : null
+      const accountName = body.account_name ? String(body.account_name).trim() : null
+
+      if (!['airtime', 'ecg', 'tv'].includes(serviceType)) {
+        statusCode = 400
+        responseBody = { success: false, error: 'service_type must be airtime, ecg, or tv' }
+      } else if (!providerCode) {
+        statusCode = 400
+        responseBody = { success: false, error: 'provider_code is required' }
+      } else if (!beneficiary) {
+        statusCode = 400
+        responseBody = { success: false, error: 'beneficiary is required (phone / meter / smartcard)' }
+      } else if (!faceAmount || faceAmount <= 0) {
+        statusCode = 400
+        responseBody = { success: false, error: 'amount must be greater than 0' }
+      } else if (serviceType === 'airtime' && !/^0[2-5]\d{8}$/.test(beneficiary)) {
+        statusCode = 400
+        responseBody = { success: false, error: 'Invalid phone. Use Ghana format e.g. 0241234567' }
+      } else {
+        const { data: result, error: buyError } = await supabase.rpc('api_buy_utility', {
+          p_user_id: userId,
+          p_api_key_id: keyId,
+          p_service_type: serviceType,
+          p_provider_code: providerCode,
+          p_beneficiary: beneficiary,
+          p_face_amount: faceAmount,
+          p_reference: reference,
+          p_account_name: accountName,
+          p_extra: {},
+        })
+
+        if (buyError) {
+          statusCode = 500
+          responseBody = { success: false, error: buyError.message }
+          triggerSmsDispatch()
+        } else if (!result?.success) {
+          statusCode = 400
+          responseBody = result
+          triggerSmsDispatch()
+        } else {
+          responseBody = {
+            success: true,
+            order: mapOrderToApi({
+              ...(result.order as Record<string, unknown>),
+              phone: (result.order as Record<string, unknown>).beneficiary,
+              network: (result.order as Record<string, unknown>).provider_code,
+            }),
+          }
+          const orderId = (result.order as Record<string, unknown>)?.id
+          if (orderId) triggerXcelFulfillment(String(orderId))
+          else triggerXcelFulfillment()
+          triggerSmsDispatch()
+        }
+      }
     } else if (path === '/v1/verify-number' && req.method === 'POST') {
       const body = await req.json().catch(() => ({}))
       const phones: string[] = Array.isArray(body.phones)
@@ -269,7 +395,9 @@ Deno.serve(async (req) => {
 
       const { data: orders } = await supabase
         .from('orders')
-        .select('reference, phone, network, size_gb, amount, status, created_at, completed_at')
+        .select(
+          'reference, phone, network, size_gb, amount, status, created_at, completed_at, service_type, face_amount, utility_meta',
+        )
         .eq('user_id', userId)
         .order('created_at', { ascending: false })
         .range(offset, offset + limit - 1)
@@ -283,7 +411,9 @@ Deno.serve(async (req) => {
 
       const { data: order } = await supabase
         .from('orders')
-        .select('reference, phone, network, size_gb, amount, status, created_at, completed_at')
+        .select(
+          'reference, phone, network, size_gb, amount, status, created_at, completed_at, service_type, face_amount, utility_meta',
+        )
         .eq('user_id', userId)
         .eq('reference', reference)
         .maybeSingle()

@@ -6,6 +6,7 @@ import { useAuth } from '../../context/AuthContext'
 import { usePackages } from '../../hooks/useDashboardData'
 import { PACKAGE_NETWORKS, apiNetworkToDb } from '../../lib/constants'
 import { formatCurrency } from '../../lib/format'
+import { detectNetworkFromPhone } from '../../lib/phoneNetwork'
 import { triggerOrderFulfillment, triggerProviderFulfillment } from '../../lib/providerFulfillment'
 import { supabase } from '../../lib/supabase'
 
@@ -16,29 +17,68 @@ type ParsedLine = {
   phone: string
   network: string
   size_gb: number
+  networkAuto?: boolean
   error?: string
 }
 
-function parseBulkLines(text: string): ParsedLine[] {
+function parseBulkLines(
+  text: string,
+  atDefault: 'at_ishare' | 'at_bigtime',
+): ParsedLine[] {
   const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
   return lines.map((line, index) => {
-    const parts = line.split(/[,\t]+/).map((p) => p.trim())
-    if (parts.length < 3) {
-      return { line: index + 1, phone: '', network: '', size_gb: 0, error: 'Use format: phone,network,size_gb' }
+    const parts = line.split(/[,\t]+/).map((p) => p.trim()).filter(Boolean)
+    const lineNo = index + 1
+
+    if (parts.length < 2) {
+      return {
+        line: lineNo,
+        phone: parts[0] ?? '',
+        network: '',
+        size_gb: 0,
+        error: 'Use phone,size_gb or phone,network,size_gb',
+      }
     }
-    const [phone, networkRaw, sizeRaw] = parts
-    const network = apiNetworkToDb(networkRaw.toLowerCase())
-    const size_gb = Number(sizeRaw)
+
+    let phone = parts[0]
+    const digits = phone.replace(/\D/g, '')
+    if (digits.startsWith('233') && digits.length === 12) {
+      phone = `0${digits.slice(3)}`
+    }
+
+    let network = ''
+    let size_gb = 0
+    let networkAuto = false
+
+    if (parts.length === 2) {
+      size_gb = Number(parts[1])
+      const detected = detectNetworkFromPhone(phone, atDefault)
+      if (!detected) {
+        return {
+          line: lineNo,
+          phone,
+          network: '',
+          size_gb,
+          error: 'Could not detect network from phone prefix',
+        }
+      }
+      network = detected
+      networkAuto = true
+    } else {
+      network = apiNetworkToDb(parts[1].toLowerCase())
+      size_gb = Number(parts[2])
+    }
+
     if (!/^0[2-5]\d{8}$/.test(phone)) {
-      return { line: index + 1, phone, network, size_gb, error: 'Invalid phone' }
+      return { line: lineNo, phone, network, size_gb, networkAuto, error: 'Invalid phone' }
     }
     if (!PACKAGE_NETWORKS.some((n) => n.id === network)) {
-      return { line: index + 1, phone, network, size_gb, error: 'Invalid network' }
+      return { line: lineNo, phone, network, size_gb, networkAuto, error: 'Invalid network' }
     }
     if (!size_gb || size_gb <= 0) {
-      return { line: index + 1, phone, network, size_gb, error: 'Invalid size_gb' }
+      return { line: lineNo, phone, network, size_gb, networkAuto, error: 'Invalid size_gb' }
     }
-    return { line: index + 1, phone, network, size_gb }
+    return { line: lineNo, phone, network, size_gb, networkAuto }
   })
 }
 
@@ -51,6 +91,7 @@ export default function PlaceOrderPage() {
   const [network, setNetwork] = useState('mtn')
   const [sizeGb, setSizeGb] = useState<number | ''>('')
   const [bulkText, setBulkText] = useState('')
+  const [bulkAtDefault, setBulkAtDefault] = useState<'at_ishare' | 'at_bigtime'>('at_ishare')
   const [submitting, setSubmitting] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -65,7 +106,10 @@ export default function PlaceOrderPage() {
     [networkPackages, sizeGb],
   )
 
-  const parsedBulk = useMemo(() => parseBulkLines(bulkText), [bulkText])
+  const parsedBulk = useMemo(
+    () => parseBulkLines(bulkText, bulkAtDefault),
+    [bulkText, bulkAtDefault],
+  )
   const validBulk = parsedBulk.filter((r) => !r.error)
   const bulkTotal = useMemo(() => {
     return validBulk.reduce((sum, row) => {
@@ -249,16 +293,33 @@ export default function PlaceOrderPage() {
       ) : (
         <Panel
           title="Bulk Orders"
-          description="One order per line: phone,network,size_gb — max 100 lines. Networks: mtn, at_ishare, at_bigtime, telecel (yello = mtn)"
+          description="One order per line. Prefer phone,size_gb — network is auto-detected from the number prefix. You can still use phone,network,size_gb to override."
         >
           <div className="space-y-4 max-w-3xl">
+            <div className="max-w-sm">
+              <label className="text-xs font-medium text-muted-foreground">
+                Default for AirtelTigo numbers (027/057/026/056)
+              </label>
+              <select
+                value={bulkAtDefault}
+                onChange={(e) => setBulkAtDefault(e.target.value as 'at_ishare' | 'at_bigtime')}
+                className="mt-1 w-full h-10 rounded-lg border border-white/10 bg-secondary/50 px-3 text-sm outline-none"
+              >
+                <option value="at_ishare">AirtelTigo iShare</option>
+                <option value="at_bigtime">AirtelTigo Bigtime</option>
+              </select>
+            </div>
+
             <textarea
               value={bulkText}
               onChange={(e) => setBulkText(e.target.value)}
               rows={10}
-              placeholder={`0241234567,mtn,1\n0271234567,at_ishare,2\n0201234567,telecel,5`}
+              placeholder={`0241234567,1\n0271234567,2\n0201234567,5\n0549876543,mtn,3`}
               className="w-full rounded-xl border border-white/10 bg-secondary/50 px-4 py-3 text-sm font-mono outline-none resize-y"
             />
+            <p className="text-[11px] text-muted-foreground">
+              Auto-detect: MTN 024/054/055/059/025 · Telecel 020/050 · AirtelTigo 027/057/026/056
+            </p>
 
             {parsedBulk.length > 0 && (
               <div className="rounded-xl border border-white/10 overflow-hidden">
@@ -270,7 +331,8 @@ export default function PlaceOrderPage() {
                   {parsedBulk.slice(0, 20).map((row) => (
                     <div key={row.line} className="px-4 py-2 flex justify-between gap-2">
                       <span className="font-mono">
-                        L{row.line}: {row.phone || '—'} · {row.network} · {row.size_gb}GB
+                        L{row.line}: {row.phone || '—'} · {row.network || '—'}
+                        {row.networkAuto ? ' (auto)' : ''} · {row.size_gb || '—'}GB
                       </span>
                       {row.error ? (
                         <span className="text-red-400">{row.error}</span>

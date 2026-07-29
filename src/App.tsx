@@ -8,6 +8,7 @@ import AuthPage from './pages/AuthPage'
 import OverviewPage from './pages/dashboard/OverviewPage'
 import ApiBalancePage from './pages/dashboard/ApiBalancePage'
 import PlaceOrderPage from './pages/dashboard/PlaceOrderPage'
+import UtilitiesOrderPage from './pages/dashboard/UtilitiesOrderPage'
 import OrdersPage from './pages/dashboard/OrdersPage'
 import DataPackagesPage from './pages/dashboard/DataPackagesPage'
 import ApiHealthPage from './pages/dashboard/ApiHealthPage'
@@ -19,6 +20,7 @@ import AdminOverviewPage from './pages/admin/AdminOverviewPage'
 import AdminOrdersPage from './pages/admin/AdminOrdersPage'
 import AdminNumberVerificationsPage from './pages/admin/AdminNumberVerificationsPage'
 import AdminPackagesPage from './pages/admin/AdminPackagesPage'
+import AdminUtilityProductsPage from './pages/admin/AdminUtilityProductsPage'
 import AdminUsersPage from './pages/admin/AdminUsersPage'
 import AdminUserDetailPage from './pages/admin/AdminUserDetailPage'
 import AdminNotificationsPage from './pages/admin/AdminNotificationsPage'
@@ -38,6 +40,7 @@ export default function App() {
               <Route index element={<OverviewPage />} />
               <Route path="balance" element={<ApiBalancePage />} />
               <Route path="place-order" element={<PlaceOrderPage />} />
+              <Route path="utilities" element={<UtilitiesOrderPage />} />
               <Route path="verify-numbers" element={<VerifyNumbersPage />} />
               <Route path="orders" element={<OrdersPage />} />
               <Route path="packages" element={<DataPackagesPage />} />
@@ -54,6 +57,7 @@ export default function App() {
               <Route path="orders" element={<AdminOrdersPage />} />
               <Route path="verifications" element={<AdminNumberVerificationsPage />} />
               <Route path="packages" element={<AdminPackagesPage />} />
+              <Route path="utilities" element={<AdminUtilityProductsPage />} />
               <Route path="users" element={<AdminUsersPage />} />
               <Route path="users/:userId" element={<AdminUserDetailPage />} />
               <Route path="notifications" element={<AdminNotificationsPage />} />
