@@ -1,4 +1,5 @@
--- Allow admin to retry completed orders that were rejected by the provider
+-- Fix admin retry: orders table has no updated_at column
+-- admin_retry_failed_order was failing on UPDATE ... SET updated_at = now()
 
 create or replace function public.admin_retry_failed_order(
   p_admin_id uuid,
@@ -71,7 +72,7 @@ begin
       v_order.user_id,
       'debit',
       v_order.amount,
-      'Admin retry: ' || v_order.network || ' ' || v_order.size_gb || 'GB -> ' || v_order.phone,
+      'Admin retry: ' || v_order.network || ' ' || coalesce(v_order.size_gb::text, '0') || 'GB -> ' || v_order.phone,
       v_order.reference
     );
   end if;
