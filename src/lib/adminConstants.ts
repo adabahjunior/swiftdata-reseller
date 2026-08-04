@@ -1,6 +1,7 @@
 export const ADMIN_NAV_ITEMS = [
   { label: 'Overview', to: '/admin', icon: 'LayoutDashboard' },
   { label: 'Orders', to: '/admin/orders', icon: 'ShoppingBag' },
+  { label: 'Refunds', to: '/admin/refunds', icon: 'RotateCcw' },
   { label: 'Number Verifications', to: '/admin/verifications', icon: 'ShieldCheck' },
   { label: 'Packages', to: '/admin/packages', icon: 'Package' },
   { label: 'Utilities', to: '/admin/utilities', icon: 'Zap' },
@@ -13,6 +14,7 @@ export const ADMIN_NAV_ITEMS = [
 export const ADMIN_PAGE_TITLES: Record<string, string> = {
   '/admin': 'Admin Overview',
   '/admin/orders': 'Orders',
+  '/admin/refunds': 'SK Plug Refunds',
   '/admin/verifications': 'Number Verifications',
   '/admin/packages': 'Packages',
   '/admin/utilities': 'Utility Products',

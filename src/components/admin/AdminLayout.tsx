@@ -6,6 +6,7 @@ import {
   Menu,
   MessageCircle,
   Package,
+  RotateCcw,
   Settings,
   ShieldCheck,
   ShoppingBag,
@@ -23,6 +24,7 @@ import { AdminOrderTrackerFab } from './AdminOrderTrackerFab'
 const ICONS = {
   LayoutDashboard,
   ShoppingBag,
+  RotateCcw,
   Package,
   Users,
   Bell,

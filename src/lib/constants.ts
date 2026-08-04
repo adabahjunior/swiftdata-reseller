@@ -80,6 +80,7 @@ export const NAV_ITEMS = [
   { label: 'Utilities', to: '/dashboard/utilities', icon: 'Zap' },
   { label: 'Verify Numbers', to: '/dashboard/verify-numbers', icon: 'ShieldCheck' },
   { label: 'All Orders', to: '/dashboard/orders', icon: 'ShoppingBag' },
+  { label: 'Refunds', to: '/dashboard/refunds', icon: 'RotateCcw' },
   { label: 'Data Packages', to: '/dashboard/packages', icon: 'Package' },
   { label: 'API Health', to: '/dashboard/health', icon: 'Activity' },
   { label: 'My API', to: '/dashboard/api', icon: 'Key' },
