@@ -6,6 +6,20 @@ import { useSiteSettings } from '../../hooks/useAdminData'
 import { providerWebhookUrl } from '../../lib/providerStatusSync'
 import { supabase } from '../../lib/supabase'
 
+const PROVIDER_TYPES = [
+  { id: 'datahub', label: 'Datahub', hint: 'user.datahubgh.com · X-API-Key' },
+  { id: 'skplug', label: 'SK Plug', hint: 'skdataplug.com/api/v1 · Bearer token' },
+  { id: 'datamart', label: 'DataMart GH', hint: 'api.datamartgh.shop/api/developer · X-API-Key' },
+] as const
+
+function providerTypeLabel(type: string) {
+  return PROVIDER_TYPES.find((t) => t.id === type)?.label ?? type
+}
+
+function providerTypeHint(type: string) {
+  return PROVIDER_TYPES.find((t) => t.id === type)?.hint ?? ''
+}
+
 const PROVIDER_SETTING_KEYS = new Set([
   'active_data_provider',
   'data_provider_primary_name',
@@ -93,12 +107,12 @@ export default function AdminSiteSettingsPage() {
 
     const providerUpdates: Array<[string, string, string]> = [
       ['active_data_provider', getValue('active_data_provider', 'primary'), 'Active data provider (primary or secondary)'],
-      ['data_provider_primary_type', getValue('data_provider_primary_type', 'datahub'), 'Primary provider API type (datahub or skplug)'],
-      ['data_provider_secondary_type', getValue('data_provider_secondary_type', 'skplug'), 'Secondary provider API type (datahub or skplug)'],
+      ['data_provider_primary_type', getValue('data_provider_primary_type', 'datahub'), 'Primary provider API type (datahub, skplug, or datamart)'],
+      ['data_provider_secondary_type', getValue('data_provider_secondary_type', 'skplug'), 'Secondary provider API type (datahub, skplug, or datamart)'],
       ['data_provider_primary_name', getValue('data_provider_primary_name', 'Primary Datahub'), 'Display name for primary provider'],
       ['data_provider_secondary_name', getValue('data_provider_secondary_name', 'SK Plug'), 'Display name for secondary provider'],
-      ['data_provider_primary_api_key', getValue('data_provider_primary_api_key'), 'Primary Datahub API key'],
-      ['data_provider_secondary_api_key', getValue('data_provider_secondary_api_key'), 'Secondary SK Plug API token'],
+      ['data_provider_primary_api_key', getValue('data_provider_primary_api_key'), 'Primary provider API key'],
+      ['data_provider_secondary_api_key', getValue('data_provider_secondary_api_key'), 'Secondary provider API key/token'],
     ]
 
     for (const [key, value, label] of providerUpdates) {
@@ -128,17 +142,17 @@ export default function AdminSiteSettingsPage() {
     setMessage(null)
 
     const xcelUpdates: Array<[string, string, string]> = [
+      ['xcel_api_key', getValue('xcel_api_key'), 'Xcel public/API key (X-API-KEY header)'],
+      ['xcel_default_merchant_id', getValue('xcel_default_merchant_id'), 'Xcel merchant ID (X-MERCHANT-ID + body merchant)'],
+      ['xcel_biller_channel', getValue('xcel_biller_channel', 'FUNDGATE'), 'Xcel biller_channel'],
+      ['xcel_user_id', getValue('xcel_user_id'), 'Xcel partner user_id (required for buy)'],
+      ['xcel_pin', getValue('xcel_pin'), 'Xcel partner PIN'],
+      ['xcel_from_acct', getValue('xcel_from_acct'), 'Xcel debit/from account number'],
+      ['xcel_hmac_secret', getValue('xcel_hmac_secret'), 'Xcel HMAC / API secret'],
       ['xcel_enabled', getValue('xcel_enabled', 'false'), 'Enable Xcel Airtime / ECG / TV fulfillment'],
       ['xcel_api_base', getValue('xcel_api_base', 'https://api.xcelapp.com'), 'Xcel API base URL'],
       ['xcel_dl_code_path', getValue('xcel_dl_code_path', '/partners/momo/dl-code'), 'Xcel DL-code path'],
       ['xcel_buy_path', getValue('xcel_buy_path', '/partners/utilities/buy'), 'Xcel utilities buy path'],
-      ['xcel_user_id', getValue('xcel_user_id'), 'Xcel partner user_id'],
-      ['xcel_pin', getValue('xcel_pin'), 'Xcel partner PIN'],
-      ['xcel_from_acct', getValue('xcel_from_acct'), 'Xcel debit/from account number'],
-      ['xcel_hmac_secret', getValue('xcel_hmac_secret'), 'Xcel HMAC / API secret'],
-      ['xcel_api_key', getValue('xcel_api_key'), 'Xcel API key (Authorization header if required)'],
-      ['xcel_default_merchant_id', getValue('xcel_default_merchant_id'), 'Default Xcel merchant ID (from VAS list)'],
-      ['xcel_biller_channel', getValue('xcel_biller_channel', 'FUNDGATE'), 'Xcel biller_channel'],
     ]
 
     for (const [key, value, label] of xcelUpdates) {
@@ -266,7 +280,7 @@ export default function AdminSiteSettingsPage() {
 
       <Panel
         title="Data Providers"
-        description="Switch between Datahub (primary) and SK Plug (secondary). The active provider receives all new orders immediately."
+        description="Choose Datahub, SK Plug, or DataMart GH for each slot. The active slot receives all new data orders."
       >
         {loading ? (
           <p className="text-sm text-muted-foreground">Loading provider settings…</p>
@@ -296,7 +310,7 @@ export default function AdminSiteSettingsPage() {
                       <p className="text-xs uppercase tracking-wide text-muted-foreground">{slug}</p>
                       <p className="font-semibold mt-1">{name}</p>
                       <p className="text-[11px] text-muted-foreground mt-1">
-                        {type === 'skplug' ? 'SK Plug API' : 'Datahub API'}
+                        {providerTypeLabel(type)} API
                       </p>
                       {selected && (
                         <p className="text-xs text-emerald-400 mt-2">Active — receiving new orders</p>
@@ -309,7 +323,34 @@ export default function AdminSiteSettingsPage() {
 
             <div className="grid sm:grid-cols-2 gap-5">
               <div className="space-y-4 rounded-xl border border-white/10 p-4">
-                <h3 className="text-sm font-semibold">Primary — Datahub</h3>
+                <h3 className="text-sm font-semibold">Primary</h3>
+                <div>
+                  <label className="text-xs text-muted-foreground">API type</label>
+                  <select
+                    value={primaryType}
+                    onChange={(e) => {
+                      const type = e.target.value
+                      setDraft({
+                        ...draft,
+                        data_provider_primary_type: type,
+                        data_provider_primary_name:
+                          draft.data_provider_primary_name ??
+                          (type === 'datamart'
+                            ? 'DataMart GH'
+                            : type === 'skplug'
+                              ? 'SK Plug'
+                              : primaryName || 'Primary Datahub'),
+                      })
+                    }}
+                    className="mt-1 w-full h-10 rounded-lg border border-white/10 bg-secondary/50 px-3 text-sm outline-none"
+                  >
+                    {PROVIDER_TYPES.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
                 <div>
                   <label className="text-xs text-muted-foreground">Display name</label>
                   <input
@@ -319,21 +360,46 @@ export default function AdminSiteSettingsPage() {
                   />
                 </div>
                 <div>
-                  <label className="text-xs text-muted-foreground">API key</label>
+                  <label className="text-xs text-muted-foreground">API key / token</label>
                   <PasswordInput
                     value={getValue('data_provider_primary_api_key')}
                     onChange={(e) => setDraft({ ...draft, data_provider_primary_api_key: e.target.value })}
-                    placeholder="sk_..."
+                    placeholder="API credential…"
                     className="mt-1 border-white/10 pl-3"
                   />
                 </div>
-                <p className="text-[11px] text-muted-foreground">
-                  Base: user.datahubgh.com · Auth: X-API-Key
-                </p>
+                <p className="text-[11px] text-muted-foreground">{providerTypeHint(primaryType)}</p>
               </div>
 
               <div className="space-y-4 rounded-xl border border-white/10 p-4">
-                <h3 className="text-sm font-semibold">Secondary — SK Plug</h3>
+                <h3 className="text-sm font-semibold">Secondary</h3>
+                <div>
+                  <label className="text-xs text-muted-foreground">API type</label>
+                  <select
+                    value={secondaryType}
+                    onChange={(e) => {
+                      const type = e.target.value
+                      setDraft({
+                        ...draft,
+                        data_provider_secondary_type: type,
+                        data_provider_secondary_name:
+                          draft.data_provider_secondary_name ??
+                          (type === 'datamart'
+                            ? 'DataMart GH'
+                            : type === 'skplug'
+                              ? 'SK Plug'
+                              : secondaryName || 'Datahub'),
+                      })
+                    }}
+                    className="mt-1 w-full h-10 rounded-lg border border-white/10 bg-secondary/50 px-3 text-sm outline-none"
+                  >
+                    {PROVIDER_TYPES.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
                 <div>
                   <label className="text-xs text-muted-foreground">Display name</label>
                   <input
@@ -343,17 +409,15 @@ export default function AdminSiteSettingsPage() {
                   />
                 </div>
                 <div>
-                  <label className="text-xs text-muted-foreground">API token</label>
+                  <label className="text-xs text-muted-foreground">API key / token</label>
                   <PasswordInput
                     value={getValue('data_provider_secondary_api_key')}
                     onChange={(e) => setDraft({ ...draft, data_provider_secondary_api_key: e.target.value })}
-                    placeholder="Bearer token…"
+                    placeholder="API credential…"
                     className="mt-1 border-white/10 pl-3"
                   />
                 </div>
-                <p className="text-[11px] text-muted-foreground">
-                  Base: skdataplug.com/api/v1 · Auth: Bearer token
-                </p>
+                <p className="text-[11px] text-muted-foreground">{providerTypeHint(secondaryType)}</p>
               </div>
             </div>
 
@@ -429,7 +493,8 @@ export default function AdminSiteSettingsPage() {
         </div>
         <p className="text-[11px] text-muted-foreground mt-2">
           In Datahub: POST <span className="font-mono">/webhook</span> with your callback URL, or paste this URL in their dashboard
-          webhook settings. SK Plug orders use polling via <span className="font-mono">GET /status/&#123;order_id&#125;/</span>.
+          webhook settings. SK Plug uses <span className="font-mono">GET /status/&#123;order_id&#125;/</span>. DataMart uses{' '}
+          <span className="font-mono">GET /order-status/&#123;reference&#125;</span>.
         </p>
       </Panel>
 
@@ -467,9 +532,9 @@ export default function AdminSiteSettingsPage() {
             ['provider_fulfillment_enabled', 'Forward successful orders to the active provider'],
             ['provider_status_sync_enabled', 'Poll provider APIs for live order status updates'],
             ['provider_mtn_network_key', 'Datahub MTN network key (YELLO or MTN_XPRESS)'],
-            ['active_data_provider', 'Active provider slot (primary Datahub or secondary SK Plug)'],
-            ['data_provider_primary_api_key', 'Primary Datahub API key (admin only)'],
-            ['data_provider_secondary_api_key', 'Secondary SK Plug API token (admin only)'],
+            ['active_data_provider', 'Active provider slot (primary or secondary)'],
+            ['data_provider_primary_api_key', 'Primary provider API key (admin only)'],
+            ['data_provider_secondary_api_key', 'Secondary provider API key/token (admin only)'],
             ['min_topup_amount', 'Minimum wallet top-up in GHS'],
             ['sms_enabled', 'Send SMS via TXTConnect (credit, failed orders, low balance)'],
             ['sms_api_key', 'TXTConnect API key'],

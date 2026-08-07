@@ -8,6 +8,7 @@ const corsHeaders = {
 
 const DATAHUB_BASE = 'https://user.datahubgh.com/api/external'
 const SKPLUG_BASE = 'https://skdataplug.com/api/v1'
+const DATAMART_BASE = 'https://api.datamartgh.shop/api/developer'
 
 /** Our DB network → Datahub networkKey */
 const DATAHUB_NETWORK_MAP: Record<string, string> = {
@@ -25,6 +26,14 @@ const SKPLUG_NETWORK_MAP: Record<string, string> = {
   telecel: 'TELECEL',
 }
 
+/** Our DB network → DataMart GH network */
+const DATAMART_NETWORK_MAP: Record<string, string> = {
+  mtn: 'YELLO',
+  at_ishare: 'AT_PREMIUM',
+  at_bigtime: 'at',
+  telecel: 'TELECEL',
+}
+
 type OrderRow = {
   id: string
   reference: string
@@ -36,13 +45,25 @@ type OrderRow = {
 }
 
 type ProviderSlug = 'primary' | 'secondary'
-type ProviderType = 'datahub' | 'skplug'
+type ProviderType = 'datahub' | 'skplug' | 'datamart'
 
 type ActiveProvider = {
   slug: ProviderSlug
   type: ProviderType
   name: string
   apiKey: string
+}
+
+function normalizeProviderType(raw: string | undefined, fallback: ProviderType): ProviderType {
+  const t = (raw ?? fallback).trim().toLowerCase()
+  if (t === 'skplug' || t === 'datamart' || t === 'datahub') return t
+  return fallback
+}
+
+function defaultProviderName(type: ProviderType, slug: ProviderSlug) {
+  if (type === 'skplug') return slug === 'secondary' ? 'SK Plug' : 'SK Plug'
+  if (type === 'datamart') return 'DataMart GH'
+  return slug === 'primary' ? 'Primary Datahub' : 'Datahub'
 }
 
 type PurchaseResult = {
@@ -72,20 +93,20 @@ function getActiveProvider(
   const secondaryKey = settingsMap.data_provider_secondary_api_key?.trim() || ''
 
   if (slug === 'secondary') {
-    const type = (settingsMap.data_provider_secondary_type?.trim() || 'skplug') as ProviderType
+    const type = normalizeProviderType(settingsMap.data_provider_secondary_type, 'skplug')
     return {
       slug,
-      type: type === 'datahub' ? 'datahub' : 'skplug',
-      name: settingsMap.data_provider_secondary_name?.trim() || 'SK Plug',
+      type,
+      name: settingsMap.data_provider_secondary_name?.trim() || defaultProviderName(type, slug),
       apiKey: secondaryKey,
     }
   }
 
-  const type = (settingsMap.data_provider_primary_type?.trim() || 'datahub') as ProviderType
+  const type = normalizeProviderType(settingsMap.data_provider_primary_type, 'datahub')
   return {
     slug,
-    type: type === 'skplug' ? 'skplug' : 'datahub',
-    name: settingsMap.data_provider_primary_name?.trim() || 'Primary Datahub',
+    type,
+    name: settingsMap.data_provider_primary_name?.trim() || defaultProviderName(type, slug),
     apiKey: primaryKey,
   }
 }
@@ -148,6 +169,56 @@ async function skplugPurchase(
   }
 }
 
+async function datamartPurchase(
+  apiKey: string,
+  payload: {
+    phoneNumber: string
+    network: string
+    capacity: string
+    gateway: string
+    ref: string
+  },
+): Promise<PurchaseResult> {
+  const res = await fetch(`${DATAMART_BASE}/purchase`, {
+    method: 'POST',
+    headers: {
+      'X-API-Key': apiKey,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  })
+  const body = await res.json().catch(() => ({}))
+  const data = (body?.data ?? {}) as Record<string, unknown>
+  const orderRef =
+    data.orderReference ??
+    data.reference ??
+    data.ref ??
+    body?.orderReference ??
+    body?.reference ??
+    null
+  const status = String(data.status ?? body?.status ?? '').toLowerCase()
+  const success =
+    res.ok &&
+    (body?.status === 'success' || body?.success === true) &&
+    status !== 'failed' &&
+    status !== 'error'
+
+  return {
+    success,
+    providerRef: orderRef ? String(orderRef) : payload.ref,
+    providerOrderNo: orderRef ? String(orderRef) : null,
+    error: success
+      ? null
+      : String(
+          body?.message ??
+            body?.error ??
+            data.message ??
+            `DataMart rejected order (${res.status})`,
+        ),
+    raw: body as Record<string, unknown>,
+  }
+}
+
 async function purchaseWithProvider(
   provider: ActiveProvider,
   order: OrderRow,
@@ -159,6 +230,17 @@ async function purchaseWithProvider(
       recipient: order.phone,
       network,
       gb_size: String(Number(order.size_gb)),
+    })
+  }
+
+  if (provider.type === 'datamart') {
+    const network = DATAMART_NETWORK_MAP[order.network] ?? order.network.toUpperCase()
+    return datamartPurchase(provider.apiKey, {
+      phoneNumber: order.phone,
+      network,
+      capacity: String(Number(order.size_gb)),
+      gateway: 'wallet',
+      ref: order.reference,
     })
   }
 
@@ -182,6 +264,14 @@ async function providerHealth(provider: ActiveProvider) {
     })
     const body = await res.json().catch(() => ({}))
     return { ok: res.ok, body }
+  }
+
+  if (provider.type === 'datamart') {
+    const res = await fetch(`${DATAMART_BASE}/balance`, {
+      headers: { 'X-API-Key': provider.apiKey },
+    })
+    const body = await res.json().catch(() => ({}))
+    return { ok: res.ok && body?.status === 'success', body }
   }
 
   const res = await fetch(`${DATAHUB_BASE}/balance`, {
@@ -405,7 +495,7 @@ Deno.serve(async (req) => {
     return json({
       success: true,
       endpoints: {
-        'POST /process': 'Submit pending orders to the active provider (Datahub or SK Plug)',
+        'POST /process': 'Submit pending orders to the active provider (Datahub, SK Plug, or DataMart)',
         'POST /order/{id}': 'Submit one order to the active provider',
         'GET /health': 'Check active provider connection',
       },

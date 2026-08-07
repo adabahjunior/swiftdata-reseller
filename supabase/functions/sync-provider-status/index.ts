@@ -8,6 +8,7 @@ const corsHeaders = {
 
 const DATAHUB_BASE = 'https://user.datahubgh.com/api/external'
 const SKPLUG_BASE = 'https://skdataplug.com/api/v1'
+const DATAMART_BASE = 'https://api.datamartgh.shop/api/developer'
 
 type OrderRow = {
   id: string
@@ -35,9 +36,10 @@ function mapProviderStatus(raw: string): { providerStatus: string; orderStatus: 
   if (['failed', 'failure', 'error', 'cancelled', 'canceled'].includes(s)) {
     return { providerStatus: 'failed', orderStatus: 'failed' }
   }
-  if (['processing', 'in_progress', 'in-progress', 'pending', 'submitted'].includes(s)) {
+  if (['processing', 'in_progress', 'in-progress', 'pending', 'submitted', 'waiting'].includes(s)) {
     return {
-      providerStatus: s === 'pending' ? 'pending' : s === 'submitted' ? 'submitted' : 'processing',
+      providerStatus:
+        s === 'pending' ? 'pending' : s === 'submitted' ? 'submitted' : s === 'waiting' ? 'waiting' : 'processing',
       orderStatus: 'processing',
     }
   }
@@ -91,35 +93,92 @@ async function fetchSkplugStatus(token: string, orderId: string) {
   return { ok: false, status: null, body }
 }
 
-function resolveProviderType(order: OrderRow): 'datahub' | 'skplug' {
-  if (order.provider_type === 'skplug' || order.provider_type === 'datahub') {
+async function fetchDatamartStatus(apiKey: string, reference: string) {
+  const ref = reference.trim()
+  if (!ref) return { ok: false, status: null, body: { error: 'No reference' } }
+  const res = await fetch(`${DATAMART_BASE}/order-status/${encodeURIComponent(ref)}`, {
+    headers: { 'X-API-Key': apiKey },
+  })
+  const body = await res.json().catch(() => ({}))
+  const data = (body?.data ?? {}) as Record<string, unknown>
+  const status = data.status ?? body?.status
+  if (status && String(status).toLowerCase() !== 'error') {
+    return { ok: true, status: String(status), body }
+  }
+  return { ok: false, status: null, body }
+}
+
+function resolveProviderType(order: OrderRow): 'datahub' | 'skplug' | 'datamart' {
+  if (
+    order.provider_type === 'skplug' ||
+    order.provider_type === 'datahub' ||
+    order.provider_type === 'datamart'
+  ) {
     return order.provider_type
   }
-  if (order.provider_name?.toLowerCase().includes('sk plug')) return 'skplug'
+  const name = order.provider_name?.toLowerCase() ?? ''
+  if (name.includes('sk plug') || name.includes('skplug')) return 'skplug'
+  if (name.includes('datamart')) return 'datamart'
   return 'datahub'
+}
+
+function credentialForType(
+  settingsMap: Record<string, string>,
+  type: 'datahub' | 'skplug' | 'datamart',
+) {
+  const primaryType = (settingsMap.data_provider_primary_type || 'datahub').trim().toLowerCase()
+  const secondaryType = (settingsMap.data_provider_secondary_type || 'skplug').trim().toLowerCase()
+  if (primaryType === type) return settingsMap.data_provider_primary_api_key?.trim() || ''
+  if (secondaryType === type) return settingsMap.data_provider_secondary_api_key?.trim() || ''
+  // Fallbacks when type labels drifted from keys
+  if (type === 'skplug') {
+    return (
+      settingsMap.data_provider_secondary_api_key?.trim() ||
+      settingsMap.data_provider_primary_api_key?.trim() ||
+      ''
+    )
+  }
+  if (type === 'datamart') {
+    return (
+      settingsMap.data_provider_primary_api_key?.trim() ||
+      settingsMap.data_provider_secondary_api_key?.trim() ||
+      ''
+    )
+  }
+  return (
+    settingsMap.data_provider_primary_api_key?.trim() ||
+    settingsMap.data_provider_secondary_api_key?.trim() ||
+    ''
+  )
 }
 
 async function syncOrderStatus(
   supabase: ReturnType<typeof createClient>,
   order: OrderRow,
-  datahubKey: string,
-  skplugToken: string,
+  settingsMap: Record<string, string>,
 ) {
   const providerType = resolveProviderType(order)
+  const credential = credentialForType(settingsMap, providerType)
   let result: { ok: boolean; status: string | null; body: unknown }
 
   if (providerType === 'skplug') {
     const orderId = order.provider_order_number ?? order.provider_reference ?? order.reference
-    if (!skplugToken) {
+    if (!credential) {
       return { order_id: order.id, skipped: true, reason: 'No SK Plug token' }
     }
-    result = await fetchSkplugStatus(skplugToken, orderId)
+    result = await fetchSkplugStatus(credential, orderId)
+  } else if (providerType === 'datamart') {
+    const ref = order.provider_reference ?? order.provider_order_number ?? order.reference
+    if (!credential) {
+      return { order_id: order.id, skipped: true, reason: 'No DataMart API key' }
+    }
+    result = await fetchDatamartStatus(credential, ref)
   } else {
-    if (!datahubKey) {
+    if (!credential) {
       return { order_id: order.id, skipped: true, reason: 'No Datahub key' }
     }
     result = await fetchDatahubStatus(
-      datahubKey,
+      credential,
       order.provider_reference ?? order.reference,
       order.provider_order_number,
     )
@@ -139,7 +198,6 @@ async function syncOrderStatus(
   const mapped = mapProviderStatus(result.status)
   const update: Record<string, unknown> = {
     provider_status: mapped.providerStatus,
-    updated_at: new Date().toISOString(),
   }
 
   if (mapped.orderStatus && mapped.orderStatus !== order.status) {
@@ -231,7 +289,6 @@ Deno.serve(async (req) => {
       const mapped = mapProviderStatus(status)
       const update: Record<string, unknown> = {
         provider_status: mapped.providerStatus,
-        updated_at: new Date().toISOString(),
       }
       if (mapped.orderStatus) {
         update.status = mapped.orderStatus
@@ -251,19 +308,6 @@ Deno.serve(async (req) => {
         return json({ success: true, processed: 0, message: 'Provider status sync disabled' })
       }
 
-      const datahubKey =
-        settingsMap.data_provider_primary_type !== 'skplug'
-          ? settingsMap.data_provider_primary_api_key?.trim()
-          : settingsMap.data_provider_secondary_type === 'datahub'
-            ? settingsMap.data_provider_secondary_api_key?.trim()
-            : ''
-      const skplugToken =
-        settingsMap.data_provider_secondary_type === 'skplug'
-          ? settingsMap.data_provider_secondary_api_key?.trim()
-          : settingsMap.data_provider_primary_type === 'skplug'
-            ? settingsMap.data_provider_primary_api_key?.trim()
-            : ''
-
       const limit = Math.min(Number(url.searchParams.get('limit') ?? 50), 100)
       const { data: orders, error } = await supabase.rpc('get_orders_pending_provider_status', {
         p_limit: limit,
@@ -275,7 +319,7 @@ Deno.serve(async (req) => {
 
       const results = []
       for (const order of (orders as OrderRow[]) ?? []) {
-        results.push(await syncOrderStatus(supabase, order, datahubKey ?? '', skplugToken ?? ''))
+        results.push(await syncOrderStatus(supabase, order, settingsMap))
       }
 
       return json({
