@@ -256,9 +256,6 @@ export default function VerifyNumbersPage() {
         </div>
         {error && <p className="text-sm text-red-400 mt-3">{error}</p>}
         {message && <p className="text-sm text-emerald-400 mt-3">{message}</p>}
-        <p className="text-[11px] text-muted-foreground mt-3">
-          DataMart rate limits: 2 single checks/min · 10 bulk requests/min (up to 100 numbers each).
-        </p>
       </Panel>
 
       {results.length > 0 && (

@@ -154,7 +154,9 @@ function interpretSingle(
       servable: null,
       recommendation: null,
       status: 'error',
-      message: `Rate limited${retry ? ` — retry after ${retry}s` : ''}. DataMart allows 2 single checks/min.`,
+      message: retry
+        ? `Too many requests — try again in ${retry}s`
+        : 'Too many requests — try again shortly',
       provider_exists: null,
       provider_name: provider.name,
       network: 'MTN',
@@ -455,7 +457,7 @@ Deno.serve(async (req) => {
           return json(
             {
               success: false,
-              error: 'DataMart bulk rate limit exceeded (10 requests/min). Retry shortly.',
+              error: 'Too many requests — try again shortly.',
               code: 'RATE_LIMIT_EXCEEDED',
               retryAfter: (upstream.body as Record<string, unknown>).retryAfter ?? null,
             },
@@ -476,7 +478,7 @@ Deno.serve(async (req) => {
               servable: null,
               recommendation: null,
               status: 'error',
-              message: 'Bulk verify failed; retry these numbers separately (rate limits apply)',
+              message: 'Bulk verify failed; retry these numbers separately',
               provider_exists: null,
               provider_name: provider.name,
               network: 'MTN',
