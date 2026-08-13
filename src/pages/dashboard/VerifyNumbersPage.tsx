@@ -5,6 +5,7 @@ import { useAuth } from '../../context/AuthContext'
 import { formatDate } from '../../lib/format'
 import {
   checkNumbers,
+  isMtnPhone,
   requestNumberVerification,
   type NumberCheckResult,
 } from '../../lib/numberVerification'
@@ -14,7 +15,8 @@ import type { NumberVerification } from '../../types/database'
 function normalizePhone(raw: string): string {
   let phone = raw.trim().replace(/[\s\-()]/g, '')
   if (phone.startsWith('+233')) phone = `0${phone.slice(4)}`
-  else if (phone.startsWith('233') && phone.length === 12) phone = `0${phone.slice(3)}`
+  else if (phone.startsWith('233') && phone.length >= 12) phone = `0${phone.slice(3)}`
+  else if (/^[2-5]\d{8}$/.test(phone)) phone = `0${phone}`
   return phone
 }
 
@@ -23,9 +25,30 @@ function parsePhones(text: string): string[] {
   return [...new Set(parts)]
 }
 
+function resultLabel(r: NumberCheckResult) {
+  if (r.recommendation === 'sell_any' || r.verified) {
+    return { text: 'Sell any size', tone: 'text-emerald-400', icon: CheckCircle2 }
+  }
+  if (r.recommendation === 'activate_first' || r.status === 'unverified') {
+    return { text: 'Activate first', tone: 'text-amber-400', icon: ShieldAlert }
+  }
+  if (r.status === 'invalid') {
+    return { text: 'Invalid / not MTN', tone: 'text-red-400', icon: XCircle }
+  }
+  if (r.status === 'pending' || r.status === 'submitted') {
+    return { text: r.status, tone: 'text-amber-400', icon: ShieldAlert }
+  }
+  if (r.status === 'error') {
+    return { text: 'Error', tone: 'text-red-400', icon: XCircle }
+  }
+  return { text: r.status, tone: 'text-muted-foreground', icon: ShieldAlert }
+}
+
 export default function VerifyNumbersPage() {
   const { user, session } = useAuth()
-  const [input, setInput] = useState('')
+  const [mode, setMode] = useState<'single' | 'bulk'>('single')
+  const [singlePhone, setSinglePhone] = useState('')
+  const [bulkInput, setBulkInput] = useState('')
   const [checking, setChecking] = useState(false)
   const [requesting, setRequesting] = useState(false)
   const [results, setResults] = useState<NumberCheckResult[]>([])
@@ -49,19 +72,37 @@ export default function VerifyNumbersPage() {
     void loadHistory()
   }, [user?.id])
 
-  const unverifiedResults = useMemo(
-    () => results.filter((r) => r.valid && !r.verified && r.status !== 'pending' && r.status !== 'submitted'),
+  const needsFollowUp = useMemo(
+    () =>
+      results.filter(
+        (r) =>
+          r.valid &&
+          !r.verified &&
+          (r.recommendation === 'activate_first' || r.status === 'unverified') &&
+          r.status !== 'pending' &&
+          r.status !== 'submitted',
+      ),
     [results],
   )
 
   const runCheck = async () => {
-    const phones = parsePhones(input)
+    const phones =
+      mode === 'single'
+        ? [normalizePhone(singlePhone)].filter(Boolean)
+        : parsePhones(bulkInput)
+
     if (phones.length === 0) {
-      setError('Enter at least one Ghana phone number (e.g. 0241234567)')
+      setError('Enter at least one MTN number (024, 054, 055, 059)')
       return
     }
-    if (phones.length > 50) {
-      setError('Maximum 50 numbers per check')
+    if (phones.length > 100) {
+      setError('Maximum 100 numbers per bulk check')
+      return
+    }
+
+    const nonMtn = phones.filter((p) => !isMtnPhone(p) && /^0[2-5]\d{8}$/.test(p))
+    if (mode === 'single' && phones[0] && !isMtnPhone(phones[0])) {
+      setError('Only MTN numbers are supported (024, 054, 055, 059)')
       return
     }
 
@@ -78,15 +119,18 @@ export default function VerifyNumbersPage() {
         return
       }
       setResults(data.results ?? [])
+      const skipped = nonMtn.length
       setMessage(
-        `Checked ${data.checked} — ${data.verified} verified, ${data.unverified} not verified`,
+        `Checked ${data.checked} — ${data.sell_any ?? data.verified} sell any, ${data.activate_first ?? data.unverified} activate first` +
+          (skipped ? ` · ${skipped} non-MTN flagged locally` : ''),
       )
-      const autoSelect = new Set(
-        (data.results ?? [])
-          .filter((r) => r.valid && !r.verified)
-          .map((r) => r.phone),
+      setSelected(
+        new Set(
+          (data.results ?? [])
+            .filter((r) => r.valid && !r.verified && r.recommendation === 'activate_first')
+            .map((r) => r.phone),
+        ),
       )
-      setSelected(autoSelect)
       await loadHistory()
     } catch (e) {
       setError((e as Error).message)
@@ -102,18 +146,24 @@ export default function VerifyNumbersPage() {
     setMessage(null)
 
     try {
-      const data = await requestNumberVerification(phones, session.access_token)
+      const data = await requestNumberVerification(
+        phones,
+        session.access_token,
+        'Needs MTN activation (DataMart activate_first)',
+      )
       if (!data.success) {
         setError(data.error ?? 'Could not submit verification request')
         return
       }
-      setMessage(`Sent ${phones.length} number(s) for verification. Track status below.`)
+      setMessage(
+        `Queued ${phones.length} number(s) for follow-up. Sell 1GB first, then wait up to 72h for activation.`,
+      )
       setSelected(new Set())
       await loadHistory()
       setResults((prev) =>
         prev.map((r) =>
           phones.includes(r.phone) && !r.verified
-            ? { ...r, status: 'pending', message: 'Submitted for verification' }
+            ? { ...r, status: 'pending', message: 'Queued for activation follow-up' }
             : r,
         ),
       )
@@ -137,17 +187,47 @@ export default function VerifyNumbersPage() {
     <div className="space-y-6 md:space-y-8">
       <PageHeader
         title="Verify Numbers"
-        description="Check whether MTN contacts are on the verified beneficiary list. Unverified numbers can be sent for verification."
+        description="Pre-check MTN numbers with DataMart before selling data. New SIMs may need a 1GB activation first."
       />
 
-      <Panel title="Check contacts" description="Paste one number per line, or separate with commas. Checks MTN (Yello) beneficiary eligibility.">
-        <textarea
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          rows={6}
-          placeholder={'0241234567\n0549876543\n0201112233'}
-          className="w-full rounded-xl border border-white/10 bg-secondary/50 px-4 py-3 text-sm font-mono outline-none resize-y"
-        />
+      <Panel
+        title="Check MTN numbers"
+        description="Only MTN prefixes 024 / 054 / 055 / 059. Single check or bulk (up to 100)."
+      >
+        <div className="flex flex-wrap gap-2 mb-4">
+          {(['single', 'bulk'] as const).map((m) => (
+            <button
+              key={m}
+              type="button"
+              onClick={() => setMode(m)}
+              className={`h-9 rounded-lg border px-3 text-sm capitalize ${
+                mode === m
+                  ? 'border-primary/40 bg-primary/10 text-primary'
+                  : 'border-white/10 bg-secondary/50'
+              }`}
+            >
+              {m}
+            </button>
+          ))}
+        </div>
+
+        {mode === 'single' ? (
+          <input
+            value={singlePhone}
+            onChange={(e) => setSinglePhone(e.target.value)}
+            placeholder="0241234567"
+            className="w-full max-w-sm h-11 rounded-xl border border-white/10 bg-secondary/50 px-4 text-sm font-mono outline-none"
+          />
+        ) : (
+          <textarea
+            value={bulkInput}
+            onChange={(e) => setBulkInput(e.target.value)}
+            rows={6}
+            placeholder={'0241234567\n0549876543\n0551112233'}
+            className="w-full rounded-xl border border-white/10 bg-secondary/50 px-4 py-3 text-sm font-mono outline-none resize-y"
+          />
+        )}
+
         <div className="mt-3 flex flex-wrap gap-2">
           <button
             type="button"
@@ -156,81 +236,78 @@ export default function VerifyNumbersPage() {
             className="inline-flex items-center gap-2 h-10 px-5 rounded-lg bg-primary text-primary-foreground text-sm font-bold disabled:opacity-60"
           >
             {checking ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4" />}
-            {checking ? 'Checking…' : 'Check numbers'}
+            {checking ? 'Checking…' : mode === 'bulk' ? 'Bulk verify' : 'Verify number'}
           </button>
-          {unverifiedResults.length > 0 && (
+          {needsFollowUp.length > 0 && (
             <button
               type="button"
-              onClick={() => void sendForVerification([...selected].filter((p) => unverifiedResults.some((r) => r.phone === p)))}
+              onClick={() =>
+                void sendForVerification(
+                  [...selected].filter((p) => needsFollowUp.some((r) => r.phone === p)),
+                )
+              }
               disabled={requesting || selected.size === 0}
               className="inline-flex items-center gap-2 h-10 px-5 rounded-lg border border-white/10 bg-secondary/50 text-sm font-bold disabled:opacity-60"
             >
               {requesting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-              Send selected for verification ({selected.size})
+              Queue for follow-up ({selected.size})
             </button>
           )}
         </div>
         {error && <p className="text-sm text-red-400 mt-3">{error}</p>}
         {message && <p className="text-sm text-emerald-400 mt-3">{message}</p>}
+        <p className="text-[11px] text-muted-foreground mt-3">
+          DataMart rate limits: 2 single checks/min · 10 bulk requests/min (up to 100 numbers each).
+        </p>
       </Panel>
 
       {results.length > 0 && (
-        <Panel title="Check results">
+        <Panel title="Results">
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-white/10 text-muted-foreground text-left">
                   <th className="py-2 pr-3 w-8" />
                   <th className="py-2 pr-3 font-medium">Phone</th>
-                  <th className="py-2 pr-3 font-medium">Status</th>
+                  <th className="py-2 pr-3 font-medium">Recommendation</th>
                   <th className="py-2 font-medium">Message</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/10">
-                {results.map((r) => (
-                  <tr key={r.phone}>
-                    <td className="py-2.5 pr-3">
-                      {r.valid && !r.verified ? (
-                        <input
-                          type="checkbox"
-                          checked={selected.has(r.phone)}
-                          onChange={() => togglePhone(r.phone)}
-                          className="rounded border-white/20"
-                        />
-                      ) : null}
-                    </td>
-                    <td className="py-2.5 pr-3 font-mono">{r.phone || '—'}</td>
-                    <td className="py-2.5 pr-3">
-                      {r.verified ? (
-                        <span className="inline-flex items-center gap-1 text-emerald-400 text-xs font-bold">
-                          <CheckCircle2 className="h-3.5 w-3.5" /> Verified
+                {results.map((r) => {
+                  const label = resultLabel(r)
+                  const Icon = label.icon
+                  return (
+                    <tr key={r.phone}>
+                      <td className="py-2.5 pr-3">
+                        {r.valid && !r.verified && r.recommendation === 'activate_first' ? (
+                          <input
+                            type="checkbox"
+                            checked={selected.has(r.phone)}
+                            onChange={() => togglePhone(r.phone)}
+                            className="rounded border-white/20"
+                          />
+                        ) : null}
+                      </td>
+                      <td className="py-2.5 pr-3 font-mono">{r.phone || '—'}</td>
+                      <td className="py-2.5 pr-3">
+                        <span className={`inline-flex items-center gap-1 text-xs font-bold ${label.tone}`}>
+                          <Icon className="h-3.5 w-3.5" /> {label.text}
                         </span>
-                      ) : r.status === 'invalid' ? (
-                        <span className="inline-flex items-center gap-1 text-red-400 text-xs font-bold">
-                          <XCircle className="h-3.5 w-3.5" /> Invalid
-                        </span>
-                      ) : r.status === 'pending' || r.status === 'submitted' ? (
-                        <span className="inline-flex items-center gap-1 text-amber-400 text-xs font-bold">
-                          <ShieldAlert className="h-3.5 w-3.5" /> {r.status}
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 text-amber-400 text-xs font-bold">
-                          <ShieldAlert className="h-3.5 w-3.5" /> Not verified
-                        </span>
-                      )}
-                    </td>
-                    <td className="py-2.5 text-muted-foreground text-xs">{r.message}</td>
-                  </tr>
-                ))}
+                      </td>
+                      <td className="py-2.5 text-muted-foreground text-xs">{r.message}</td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
           </div>
         </Panel>
       )}
 
-      <Panel title="Your verification history" description="Numbers you have checked or submitted for verification.">
+      <Panel title="Your verification history" description="Past MTN checks and activation follow-ups.">
         {history.length === 0 ? (
-          <EmptyState title="No checks yet" description="Verify a contact above to start building your list." />
+          <EmptyState title="No checks yet" description="Verify an MTN number above to start building your list." />
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">

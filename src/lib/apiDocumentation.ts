@@ -178,24 +178,69 @@ export const DOC_ENDPOINTS: DocEndpoint[] = [
   {
     method: 'POST',
     path: '/v1/verify-number',
-    title: 'Verify Number(s)',
+    title: 'Verify MTN Number',
     description:
-      'Check whether one or more MTN phones are on the verified beneficiary list. Pass phone or phones[].',
+      'Pre-check one MTN number via DataMart before selling data. Only 024/054/055/059. Returns servable + recommendation (sell_any | activate_first).',
     body: `{
   "phone": "0241234567"
 }`,
     response: `{
   "success": true,
   "checked": 1,
-  "verified": 0,
-  "unverified": 1,
+  "verified": 1,
+  "unverified": 0,
+  "sell_any": 1,
+  "activate_first": 0,
   "results": [
     {
       "phone": "0241234567",
       "valid": true,
+      "verified": true,
+      "servable": true,
+      "recommendation": "sell_any",
+      "status": "verified",
+      "message": "This number can be served — you may sell any bundle size.",
+      "network": "MTN"
+    }
+  ]
+}`,
+  },
+  {
+    method: 'POST',
+    path: '/v1/verify-number/bulk',
+    title: 'Verify MTN Numbers (Bulk)',
+    description:
+      'Pre-check up to 100 MTN numbers in one request via DataMart. Non-MTN numbers are rejected locally. Also accepts phones[] on /v1/verify-number.',
+    body: `{
+  "phones": ["0241234567", "0559876543", "0271112233"]
+}`,
+    response: `{
+  "success": true,
+  "checked": 3,
+  "verified": 1,
+  "unverified": 1,
+  "sell_any": 1,
+  "activate_first": 1,
+  "summary": { "total": 3, "accepted": 1, "rejected": 2 },
+  "results": [
+    {
+      "phone": "0241234567",
+      "verified": true,
+      "recommendation": "sell_any",
+      "status": "verified"
+    },
+    {
+      "phone": "0559876543",
       "verified": false,
+      "recommendation": "activate_first",
       "status": "unverified",
-      "message": "Number is not on the verified beneficiary list"
+      "message": "Sell a 1GB bundle first, then allow up to 72 hours for activation."
+    },
+    {
+      "phone": "0271112233",
+      "valid": false,
+      "status": "invalid",
+      "message": "Only MTN numbers can be verified (024, 054, 055, 059)"
     }
   ]
 }`,
@@ -297,7 +342,8 @@ Quick Start
 3. GET /v1/packages — list available network + size_gb bundles
 4. POST /v1/buy-data — purchase data
 5. GET /v1/orders/{reference} — confirm delivery
-6. POST /v1/verify-number — check MTN beneficiary verification
+6. POST /v1/verify-number — pre-check one MTN number (DataMart)
+7. POST /v1/verify-number/bulk — pre-check up to 100 MTN numbers
 
 Endpoints
 ---------
@@ -346,6 +392,12 @@ Verify MTN number:
     -H "Authorization: Bearer sk_live_your_api_key" \\
     -H "Content-Type: application/json" \\
     -d '{"phone":"0241234567"}'
+
+Bulk verify MTN numbers:
+  curl -X POST "${API_BASE_URL}/v1/verify-number/bulk" \\
+    -H "Authorization: Bearer sk_live_your_api_key" \\
+    -H "Content-Type: application/json" \\
+    -d '{"phones":["0241234567","0559876543"]}'
 `
 }
 

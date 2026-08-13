@@ -28,6 +28,8 @@ const PROVIDER_SETTING_KEYS = new Set([
   'data_provider_secondary_api_key',
   'data_provider_primary_type',
   'data_provider_secondary_type',
+  'datamart_api_key',
+  'datamart_name',
 ])
 
 const XCEL_SETTING_KEYS = new Set([
@@ -113,6 +115,8 @@ export default function AdminSiteSettingsPage() {
       ['data_provider_secondary_name', getValue('data_provider_secondary_name', 'SK Plug'), 'Display name for secondary provider'],
       ['data_provider_primary_api_key', getValue('data_provider_primary_api_key'), 'Primary provider API key'],
       ['data_provider_secondary_api_key', getValue('data_provider_secondary_api_key'), 'Secondary provider API key/token'],
+      ['datamart_api_key', getValue('datamart_api_key'), 'DataMart GH API key (number verification)'],
+      ['datamart_name', getValue('datamart_name', 'DataMart GH'), 'DataMart display name'],
     ]
 
     for (const [key, value, label] of providerUpdates) {
@@ -418,6 +422,22 @@ export default function AdminSiteSettingsPage() {
                   />
                 </div>
                 <p className="text-[11px] text-muted-foreground">{providerTypeHint(secondaryType)}</p>
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-white/10 p-4 space-y-3 max-w-xl">
+              <h3 className="text-sm font-semibold">Number verification — DataMart</h3>
+              <p className="text-[11px] text-muted-foreground">
+                Used for MTN verify-number / bulk checks even when purchase orders use Datahub or SK Plug.
+              </p>
+              <div>
+                <label className="text-xs text-muted-foreground">DataMart API key</label>
+                <PasswordInput
+                  value={getValue('datamart_api_key')}
+                  onChange={(e) => setDraft({ ...draft, datamart_api_key: e.target.value })}
+                  placeholder="DataMart X-API-Key…"
+                  className="mt-1 border-white/10 pl-3"
+                />
               </div>
             </div>
 

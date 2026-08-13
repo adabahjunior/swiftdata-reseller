@@ -343,20 +343,36 @@ Deno.serve(async (req) => {
           triggerSmsDispatch()
         }
       }
-    } else if (path === '/v1/verify-number' && req.method === 'POST') {
+    } else if (
+      (path === '/v1/verify-number' || path === '/v1/verify-number/bulk') &&
+      req.method === 'POST'
+    ) {
       const body = await req.json().catch(() => ({}))
       const phones: string[] = Array.isArray(body.phones)
         ? body.phones.map(String)
-        : body.phone
-          ? [String(body.phone)]
-          : []
+        : Array.isArray(body.numbers)
+          ? body.numbers.map((n: unknown) =>
+              typeof n === 'string'
+                ? n
+                : String(
+                    (n as Record<string, unknown>)?.number ??
+                      (n as Record<string, unknown>)?._beneficiary_number ??
+                      '',
+                  ),
+            )
+          : body.phone
+            ? [String(body.phone)]
+            : body.phoneNumber
+              ? [String(body.phoneNumber)]
+              : []
 
+      const max = 100
       if (phones.length === 0) {
         statusCode = 400
-        responseBody = { success: false, error: 'phone or phones[] is required' }
-      } else if (phones.length > 50) {
+        responseBody = { success: false, error: 'phone, phones[], or numbers[] is required' }
+      } else if (phones.length > max) {
         statusCode = 400
-        responseBody = { success: false, error: 'Maximum 50 numbers per request' }
+        responseBody = { success: false, error: 'Maximum 100 numbers per request' }
       } else {
         const base = Deno.env.get('SUPABASE_URL')
         const key = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
@@ -364,14 +380,18 @@ Deno.serve(async (req) => {
           statusCode = 500
           responseBody = { success: false, error: 'Server misconfigured' }
         } else {
-          const verifyRes = await fetch(`${base}/functions/v1/verify-numbers/check`, {
-            method: 'POST',
-            headers: {
-              Authorization: `Bearer ${key}`,
-              'Content-Type': 'application/json',
+          const useBulk = path.endsWith('/bulk') || phones.length > 1
+          const verifyRes = await fetch(
+            `${base}/functions/v1/verify-numbers/${useBulk ? 'bulk' : 'check'}`,
+            {
+              method: 'POST',
+              headers: {
+                Authorization: `Bearer ${key}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({ phones }),
             },
-            body: JSON.stringify({ phones }),
-          })
+          )
           const verifyBody = await verifyRes.json().catch(() => ({}))
           if (!verifyRes.ok || !verifyBody?.success) {
             statusCode = verifyRes.status >= 400 ? verifyRes.status : 502
@@ -384,6 +404,9 @@ Deno.serve(async (req) => {
               checked: verifyBody.checked,
               verified: verifyBody.verified,
               unverified: verifyBody.unverified,
+              sell_any: verifyBody.sell_any,
+              activate_first: verifyBody.activate_first,
+              summary: verifyBody.summary,
               results: verifyBody.results,
             }
           }
