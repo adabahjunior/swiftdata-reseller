@@ -44,7 +44,7 @@ type OrderRow = {
   provider_submitted_at: string | null
 }
 
-type ProviderSlug = 'primary' | 'secondary'
+type ProviderSlug = 'primary' | 'secondary' | 'tertiary'
 type ProviderType = 'datahub' | 'skplug' | 'datamart'
 
 type ActiveProvider = {
@@ -81,16 +81,40 @@ function json(data: unknown, status = 200) {
   })
 }
 
+function keyForSlug(
+  settingsMap: Record<string, string>,
+  slug: ProviderSlug,
+  type: ProviderType,
+  envFallback?: string | null,
+) {
+  const slotKey =
+    slug === 'tertiary'
+      ? settingsMap.data_provider_tertiary_api_key?.trim() || ''
+      : slug === 'secondary'
+        ? settingsMap.data_provider_secondary_api_key?.trim() || ''
+        : settingsMap.data_provider_primary_api_key?.trim() || ''
+  if (slotKey) return slotKey
+  if (type === 'datahub') return envFallback?.trim() || ''
+  return ''
+}
+
 function getActiveProvider(
   settingsMap: Record<string, string>,
   envFallback?: string | null,
 ): ActiveProvider {
+  const raw = (settingsMap.active_data_provider || 'primary').trim().toLowerCase()
   const slug: ProviderSlug =
-    settingsMap.active_data_provider === 'secondary' ? 'secondary' : 'primary'
+    raw === 'tertiary' ? 'tertiary' : raw === 'secondary' ? 'secondary' : 'primary'
 
-  const primaryKey =
-    settingsMap.data_provider_primary_api_key?.trim() || envFallback?.trim() || ''
-  const secondaryKey = settingsMap.data_provider_secondary_api_key?.trim() || ''
+  if (slug === 'tertiary') {
+    const type = normalizeProviderType(settingsMap.data_provider_tertiary_type, 'datahub')
+    return {
+      slug,
+      type,
+      name: settingsMap.data_provider_tertiary_name?.trim() || defaultProviderName(type, slug),
+      apiKey: keyForSlug(settingsMap, slug, type, envFallback),
+    }
+  }
 
   if (slug === 'secondary') {
     const type = normalizeProviderType(settingsMap.data_provider_secondary_type, 'skplug')
@@ -98,7 +122,7 @@ function getActiveProvider(
       slug,
       type,
       name: settingsMap.data_provider_secondary_name?.trim() || defaultProviderName(type, slug),
-      apiKey: secondaryKey,
+      apiKey: keyForSlug(settingsMap, slug, type, envFallback),
     }
   }
 
@@ -107,7 +131,7 @@ function getActiveProvider(
     slug,
     type,
     name: settingsMap.data_provider_primary_name?.trim() || defaultProviderName(type, slug),
-    apiKey: primaryKey,
+    apiKey: keyForSlug(settingsMap, slug, type, envFallback),
   }
 }
 
@@ -495,7 +519,7 @@ Deno.serve(async (req) => {
     return json({
       success: true,
       endpoints: {
-        'POST /process': 'Submit pending orders to the active provider (Datahub, SK Plug, or DataMart)',
+        'POST /process': 'Submit pending orders to the active provider (Datahub, SK Plug, or DataMart; primary/secondary/tertiary)',
         'POST /order/{id}': 'Submit one order to the active provider',
         'GET /health': 'Check active provider connection',
       },

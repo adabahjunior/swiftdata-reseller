@@ -180,7 +180,7 @@ export const DOC_ENDPOINTS: DocEndpoint[] = [
     path: '/v1/verify-number',
     title: 'Verify MTN Number',
     description:
-      'Pre-check one MTN number via DataMart before selling data. Only 024/054/055/059. Returns servable + recommendation (sell_any | activate_first).',
+      'Pre-check one MTN number via Datahub before selling data. MTN prefixes 024/025/053/054/055/059. Returns servable + recommendation (sell_any | activate_first). Unverified numbers are submitted to Datahub automatically.',
     body: `{
   "phone": "0241234567"
 }`,
@@ -210,7 +210,7 @@ export const DOC_ENDPOINTS: DocEndpoint[] = [
     path: '/v1/verify-number/bulk',
     title: 'Verify MTN Numbers (Bulk)',
     description:
-      'Pre-check up to 100 MTN numbers in one request via DataMart. Non-MTN numbers are rejected locally. Also accepts phones[] on /v1/verify-number.',
+      'Pre-check up to 100 MTN numbers via Datahub. Non-MTN numbers are rejected locally. Also accepts phones[] on /v1/verify-number.'
     body: `{
   "phones": ["0241234567", "0559876543", "0271112233"]
 }`,
@@ -342,7 +342,7 @@ Quick Start
 3. GET /v1/packages — list available network + size_gb bundles
 4. POST /v1/buy-data — purchase data
 5. GET /v1/orders/{reference} — confirm delivery
-6. POST /v1/verify-number — pre-check one MTN number (DataMart)
+6. POST /v1/verify-number — pre-check one MTN number (Datahub)
 7. POST /v1/verify-number/bulk — pre-check up to 100 MTN numbers
 
 Endpoints

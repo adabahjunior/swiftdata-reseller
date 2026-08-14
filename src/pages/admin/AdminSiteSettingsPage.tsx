@@ -3,7 +3,7 @@ import { EmptyState, PageHeader, Panel } from '../../components/dashboard/ui'
 import { PasswordInput } from '../../components/PasswordInput'
 import { useAuth } from '../../context/AuthContext'
 import { useSiteSettings } from '../../hooks/useAdminData'
-import { providerWebhookUrl } from '../../lib/providerStatusSync'
+import { providerWebhookUrl, verificationWebhookUrl } from '../../lib/providerStatusSync'
 import { supabase } from '../../lib/supabase'
 
 const PROVIDER_TYPES = [
@@ -24,12 +24,16 @@ const PROVIDER_SETTING_KEYS = new Set([
   'active_data_provider',
   'data_provider_primary_name',
   'data_provider_secondary_name',
+  'data_provider_tertiary_name',
   'data_provider_primary_api_key',
   'data_provider_secondary_api_key',
+  'data_provider_tertiary_api_key',
   'data_provider_primary_type',
   'data_provider_secondary_type',
+  'data_provider_tertiary_type',
   'datamart_api_key',
   'datamart_name',
+  'datahub_webhook_secret',
 ])
 
 const XCEL_SETTING_KEYS = new Set([
@@ -108,15 +112,19 @@ export default function AdminSiteSettingsPage() {
     setMessage(null)
 
     const providerUpdates: Array<[string, string, string]> = [
-      ['active_data_provider', getValue('active_data_provider', 'primary'), 'Active data provider (primary or secondary)'],
+      ['active_data_provider', getValue('active_data_provider', 'primary'), 'Active data provider (primary, secondary, or tertiary)'],
       ['data_provider_primary_type', getValue('data_provider_primary_type', 'datahub'), 'Primary provider API type (datahub, skplug, or datamart)'],
       ['data_provider_secondary_type', getValue('data_provider_secondary_type', 'skplug'), 'Secondary provider API type (datahub, skplug, or datamart)'],
+      ['data_provider_tertiary_type', getValue('data_provider_tertiary_type', 'datahub'), 'Tertiary provider API type (datahub, skplug, or datamart)'],
       ['data_provider_primary_name', getValue('data_provider_primary_name', 'Primary Datahub'), 'Display name for primary provider'],
       ['data_provider_secondary_name', getValue('data_provider_secondary_name', 'SK Plug'), 'Display name for secondary provider'],
+      ['data_provider_tertiary_name', getValue('data_provider_tertiary_name', 'Datahub'), 'Display name for tertiary provider'],
       ['data_provider_primary_api_key', getValue('data_provider_primary_api_key'), 'Primary provider API key'],
       ['data_provider_secondary_api_key', getValue('data_provider_secondary_api_key'), 'Secondary provider API key/token'],
-      ['datamart_api_key', getValue('datamart_api_key'), 'DataMart GH API key (number verification)'],
+      ['data_provider_tertiary_api_key', getValue('data_provider_tertiary_api_key'), 'Tertiary provider API key'],
+      ['datamart_api_key', getValue('datamart_api_key'), 'DataMart GH API key (number verification fallback)'],
       ['datamart_name', getValue('datamart_name', 'DataMart GH'), 'DataMart display name'],
+      ['datahub_webhook_secret', getValue('datahub_webhook_secret'), 'Datahub HMAC secret for X-Webhook-Signature'],
     ]
 
     for (const [key, value, label] of providerUpdates) {
@@ -262,8 +270,10 @@ export default function AdminSiteSettingsPage() {
   const activeProvider = getValue('active_data_provider', 'primary')
   const primaryName = getValue('data_provider_primary_name', 'Primary Datahub')
   const secondaryName = getValue('data_provider_secondary_name', 'SK Plug')
+  const tertiaryName = getValue('data_provider_tertiary_name', 'Datahub')
   const primaryType = getValue('data_provider_primary_type', 'datahub')
   const secondaryType = getValue('data_provider_secondary_type', 'skplug')
+  const tertiaryType = getValue('data_provider_tertiary_type', 'datahub')
 
   return (
     <div className="space-y-6 md:space-y-8">
@@ -295,10 +305,10 @@ export default function AdminSiteSettingsPage() {
               <p className="text-[11px] text-muted-foreground mb-2">
                 All new order submissions go to the selected provider.
               </p>
-              <div className="grid sm:grid-cols-2 gap-3">
-                {(['primary', 'secondary'] as const).map((slug) => {
-                  const name = slug === 'primary' ? primaryName : secondaryName
-                  const type = slug === 'primary' ? primaryType : secondaryType
+              <div className="grid sm:grid-cols-3 gap-3">
+                {(['primary', 'secondary', 'tertiary'] as const).map((slug) => {
+                  const name = slug === 'primary' ? primaryName : slug === 'secondary' ? secondaryName : tertiaryName
+                  const type = slug === 'primary' ? primaryType : slug === 'secondary' ? secondaryType : tertiaryType
                   const selected = activeProvider === slug
                   return (
                     <button
@@ -325,7 +335,7 @@ export default function AdminSiteSettingsPage() {
               </div>
             </div>
 
-            <div className="grid sm:grid-cols-2 gap-5">
+            <div className="grid lg:grid-cols-3 gap-5">
               <div className="space-y-4 rounded-xl border border-white/10 p-4">
                 <h3 className="text-sm font-semibold">Primary</h3>
                 <div>
@@ -423,19 +433,80 @@ export default function AdminSiteSettingsPage() {
                 </div>
                 <p className="text-[11px] text-muted-foreground">{providerTypeHint(secondaryType)}</p>
               </div>
+
+              <div className="space-y-4 rounded-xl border border-white/10 p-4">
+                <h3 className="text-sm font-semibold">Tertiary (Datahub)</h3>
+                <div>
+                  <label className="text-xs text-muted-foreground">API type</label>
+                  <select
+                    value={tertiaryType}
+                    onChange={(e) => {
+                      const type = e.target.value
+                      setDraft({
+                        ...draft,
+                        data_provider_tertiary_type: type,
+                        data_provider_tertiary_name:
+                          draft.data_provider_tertiary_name ??
+                          (type === 'datamart'
+                            ? 'DataMart GH'
+                            : type === 'skplug'
+                              ? 'SK Plug'
+                              : tertiaryName || 'Datahub'),
+                      })
+                    }}
+                    className="mt-1 w-full h-10 rounded-lg border border-white/10 bg-secondary/50 px-3 text-sm outline-none"
+                  >
+                    {PROVIDER_TYPES.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs text-muted-foreground">Display name</label>
+                  <input
+                    value={tertiaryName}
+                    onChange={(e) => setDraft({ ...draft, data_provider_tertiary_name: e.target.value })}
+                    className="mt-1 w-full h-10 rounded-lg border border-white/10 bg-secondary/50 px-3 text-sm outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-muted-foreground">API key / token</label>
+                  <PasswordInput
+                    value={getValue('data_provider_tertiary_api_key')}
+                    onChange={(e) => setDraft({ ...draft, data_provider_tertiary_api_key: e.target.value })}
+                    placeholder="API credential…"
+                    className="mt-1 border-white/10 pl-3"
+                  />
+                </div>
+                <p className="text-[11px] text-muted-foreground">{providerTypeHint(tertiaryType)}</p>
+              </div>
             </div>
 
             <div className="rounded-xl border border-white/10 p-4 space-y-3 max-w-xl">
-              <h3 className="text-sm font-semibold">Number verification — DataMart</h3>
+              <h3 className="text-sm font-semibold">Number verification</h3>
               <p className="text-[11px] text-muted-foreground">
-                Used for MTN verify-number / bulk checks even when purchase orders use Datahub or SK Plug.
+                Dashboard and API verify-number calls use Datahub{' '}
+                <span className="font-mono">/purchases/verify-number</span> (tertiary key). Unverified numbers
+                are auto-submitted on Datahub; explicit queue also calls{' '}
+                <span className="font-mono">/purchases/submit-numbers</span>. DataMart remains a fallback.
               </p>
               <div>
-                <label className="text-xs text-muted-foreground">DataMart API key</label>
+                <label className="text-xs text-muted-foreground">DataMart API key (fallback)</label>
                 <PasswordInput
                   value={getValue('datamart_api_key')}
                   onChange={(e) => setDraft({ ...draft, datamart_api_key: e.target.value })}
                   placeholder="DataMart X-API-Key…"
+                  className="mt-1 border-white/10 pl-3"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground">Datahub webhook HMAC secret</label>
+                <PasswordInput
+                  value={getValue('datahub_webhook_secret')}
+                  onChange={(e) => setDraft({ ...draft, datahub_webhook_secret: e.target.value })}
+                  placeholder="Optional HMAC secret from the Datahub webhook"
                   className="mt-1 border-white/10 pl-3"
                 />
               </div>
@@ -496,9 +567,9 @@ export default function AdminSiteSettingsPage() {
 
       <Panel
         title="Live order status (Datahub)"
-        description="Register this webhook URL in your Datahub API docs (Webhooks tab) for instant updates. We also poll order status every 15 seconds when sync is enabled."
+        description="Register these webhook URLs on the Datahub API key (Webhooks tab). Datahub currently emits order.status.changed. We also poll every 15 seconds when sync is enabled."
       >
-        <label className="text-xs font-medium text-muted-foreground">Webhook callback URL</label>
+        <label className="text-xs font-medium text-muted-foreground">Order status webhook</label>
         <div className="mt-1 flex flex-wrap gap-2">
           <code className="flex-1 min-w-0 text-xs font-mono bg-black/40 border border-white/10 rounded-xl p-3 break-all">
             {providerWebhookUrl()}
@@ -511,9 +582,23 @@ export default function AdminSiteSettingsPage() {
             Copy URL
           </button>
         </div>
+        <label className="text-xs font-medium text-muted-foreground mt-4 block">Number verification webhook</label>
+        <div className="mt-1 flex flex-wrap gap-2">
+          <code className="flex-1 min-w-0 text-xs font-mono bg-black/40 border border-white/10 rounded-xl p-3 break-all">
+            {verificationWebhookUrl()}
+          </code>
+          <button
+            type="button"
+            onClick={() => void navigator.clipboard.writeText(verificationWebhookUrl())}
+            className="h-10 px-4 rounded-lg border border-white/10 text-sm font-bold hover:bg-white/5 shrink-0"
+          >
+            Copy URL
+          </button>
+        </div>
         <p className="text-[11px] text-muted-foreground mt-2">
-          In Datahub: POST <span className="font-mono">/webhook</span> with your callback URL, or paste this URL in their dashboard
-          webhook settings. SK Plug uses <span className="font-mono">GET /status/&#123;order_id&#125;/</span>. DataMart uses{' '}
+          Event: <span className="font-mono">order.status.changed</span>. Header:{' '}
+          <span className="font-mono">X-Webhook-Signature</span> (HMAC-SHA256). SK Plug uses{' '}
+          <span className="font-mono">GET /status/&#123;order_id&#125;/</span>. DataMart uses{' '}
           <span className="font-mono">GET /order-status/&#123;reference&#125;</span>.
         </p>
       </Panel>
@@ -552,9 +637,11 @@ export default function AdminSiteSettingsPage() {
             ['provider_fulfillment_enabled', 'Forward successful orders to the active provider'],
             ['provider_status_sync_enabled', 'Poll provider APIs for live order status updates'],
             ['provider_mtn_network_key', 'Datahub MTN network key (YELLO or MTN_XPRESS)'],
-            ['active_data_provider', 'Active provider slot (primary or secondary)'],
+            ['active_data_provider', 'Active provider slot (primary, secondary, or tertiary)'],
             ['data_provider_primary_api_key', 'Primary provider API key (admin only)'],
             ['data_provider_secondary_api_key', 'Secondary provider API key/token (admin only)'],
+            ['data_provider_tertiary_api_key', 'Tertiary Datahub API key (admin only)'],
+            ['datahub_webhook_secret', 'Datahub HMAC webhook secret'],
             ['min_topup_amount', 'Minimum wallet top-up in GHS'],
             ['sms_enabled', 'Send SMS via TXTConnect (credit, failed orders, low balance)'],
             ['sms_api_key', 'TXTConnect API key'],

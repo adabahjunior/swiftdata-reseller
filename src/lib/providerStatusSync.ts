@@ -22,6 +22,12 @@ export function providerWebhookUrl(): string {
   return `${base}/functions/v1/sync-provider-status/provider-webhook/datahub`
 }
 
+export function verificationWebhookUrl(): string {
+  const base = import.meta.env.VITE_SUPABASE_URL
+  if (!base) return ''
+  return `${base}/functions/v1/verify-numbers/webhook`
+}
+
 /** Ghana local 0XXXXXXXXX → digits for wa.me (233...) */
 export function whatsappLink(phone: string, text?: string): string {
   let digits = phone.replace(/\D/g, '')

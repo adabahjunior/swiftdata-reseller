@@ -37,7 +37,7 @@ export type NumberCheckResponse = {
   summary?: { total: number; accepted: number; rejected: number }
 }
 
-/** Check one or more MTN phones via DataMart (auto uses bulk for 2+). */
+/** Check one or more MTN phones via Datahub (auto uses bulk for 2+). */
 export async function checkNumbers(phones: string[], userJwt?: string | null): Promise<NumberCheckResponse> {
   const headers = authHeaders()
   if (userJwt) headers.Authorization = `Bearer ${userJwt}`
@@ -69,5 +69,5 @@ export async function requestNumberVerification(
 }
 
 export function isMtnPhone(phone: string) {
-  return /^0(24|54|55|59)\d{7}$/.test(phone)
+  return /^0(24|25|53|54|55|59)\d{7}$/.test(phone)
 }

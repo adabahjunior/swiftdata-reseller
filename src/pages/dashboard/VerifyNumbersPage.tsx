@@ -92,7 +92,7 @@ export default function VerifyNumbersPage() {
         : parsePhones(bulkInput)
 
     if (phones.length === 0) {
-      setError('Enter at least one MTN number (024, 054, 055, 059)')
+      setError('Enter at least one MTN number (024, 025, 053, 054, 055, 059)')
       return
     }
     if (phones.length > 100) {
@@ -102,7 +102,7 @@ export default function VerifyNumbersPage() {
 
     const nonMtn = phones.filter((p) => !isMtnPhone(p) && /^0[2-5]\d{8}$/.test(p))
     if (mode === 'single' && phones[0] && !isMtnPhone(phones[0])) {
-      setError('Only MTN numbers are supported (024, 054, 055, 059)')
+      setError('Only MTN numbers are supported (024, 025, 053, 054, 055, 059)')
       return
     }
 
@@ -149,14 +149,14 @@ export default function VerifyNumbersPage() {
       const data = await requestNumberVerification(
         phones,
         session.access_token,
-        'Needs MTN activation (DataMart activate_first)',
+        'Needs MTN activation (Datahub beneficiary list)',
       )
       if (!data.success) {
         setError(data.error ?? 'Could not submit verification request')
         return
       }
       setMessage(
-        `Queued ${phones.length} number(s) for follow-up. Sell 1GB first, then wait up to 72h for activation.`,
+        `Submitted ${phones.length} number(s) to Datahub for beneficiary approval.`,
       )
       setSelected(new Set())
       await loadHistory()
@@ -187,12 +187,12 @@ export default function VerifyNumbersPage() {
     <div className="space-y-6 md:space-y-8">
       <PageHeader
         title="Verify Numbers"
-        description="Pre-check MTN numbers with DataMart before selling data. New SIMs may need a 1GB activation first."
+        description="Pre-check MTN numbers with Datahub before selling data. Unverified numbers are submitted for beneficiary approval automatically."
       />
 
       <Panel
         title="Check MTN numbers"
-        description="Only MTN prefixes 024 / 054 / 055 / 059. Single check or bulk (up to 100)."
+        description="MTN prefixes 024 / 025 / 053 / 054 / 055 / 059. Single check or bulk (up to 100)."
       >
         <div className="flex flex-wrap gap-2 mb-4">
           {(['single', 'bulk'] as const).map((m) => (
@@ -250,7 +250,7 @@ export default function VerifyNumbersPage() {
               className="inline-flex items-center gap-2 h-10 px-5 rounded-lg border border-white/10 bg-secondary/50 text-sm font-bold disabled:opacity-60"
             >
               {requesting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-              Queue for follow-up ({selected.size})
+              Submit to Datahub ({selected.size})
             </button>
           )}
         </div>

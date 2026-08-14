@@ -56,26 +56,29 @@ function settingsMap(rows: Array<{ key: string; value: string }>) {
 }
 
 function getSkplugToken(settings: Record<string, string>) {
-  if ((settings.data_provider_primary_type || 'datahub') === 'skplug') {
-    return {
+  const slots = [
+    {
+      type: settings.data_provider_primary_type || 'datahub',
       token: settings.data_provider_primary_api_key?.trim() || '',
       name: settings.data_provider_primary_name?.trim() || 'SK Plug',
-    }
-  }
-  if ((settings.data_provider_secondary_type || 'skplug') === 'skplug') {
-    return {
+    },
+    {
+      type: settings.data_provider_secondary_type || 'skplug',
       token: settings.data_provider_secondary_api_key?.trim() || '',
       name: settings.data_provider_secondary_name?.trim() || 'SK Plug',
-    }
-  }
-  // Fall back to whichever key looks configured
-  const secondary = settings.data_provider_secondary_api_key?.trim() || ''
-  const primary = settings.data_provider_primary_api_key?.trim() || ''
+    },
+    {
+      type: settings.data_provider_tertiary_type || 'datahub',
+      token: settings.data_provider_tertiary_api_key?.trim() || '',
+      name: settings.data_provider_tertiary_name?.trim() || 'SK Plug',
+    },
+  ]
+  const match = slots.find((s) => s.type === 'skplug' && s.token)
+  if (match) return { token: match.token, name: match.name || 'SK Plug' }
+  const fallback = slots.find((s) => s.token)
   return {
-    token: secondary || primary,
-    name: secondary
-      ? settings.data_provider_secondary_name?.trim() || 'SK Plug'
-      : settings.data_provider_primary_name?.trim() || 'SK Plug',
+    token: fallback?.token || '',
+    name: fallback?.name || 'SK Plug',
   }
 }
 

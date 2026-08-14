@@ -2,17 +2,20 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.49.1'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Headers':
+    'authorization, x-client-info, apikey, content-type, x-datahub-signature, x-webhook-signature',
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
 }
 
 const DATAMART_BASE = 'https://api.datamartgh.shop/api/developer'
-/** MTN Ghana prefixes (Datamart verify-number is MTN-only). */
-const MTN_PREFIX_RE = /^0(24|54|55|59)\d{7}$/
+const DATAHUB_BASE = 'https://user.datahubgh.com/api/external'
+/** MTN Ghana prefixes used by Datahub / DataMart verify. */
+const MTN_PREFIX_RE = /^0(24|25|53|54|55|59)\d{7}$/
 const PHONE_RE = /^0[2-5]\d{8}$/
 
+type ProviderSlug = 'primary' | 'secondary' | 'tertiary'
 type ProviderCred = {
-  slug: 'primary' | 'secondary'
+  slug: ProviderSlug
   name: string
   apiKey: string
 }
@@ -29,6 +32,7 @@ export type CheckResult = {
   provider_name: string | null
   network: string | null
   cached: boolean | null
+  submitted_to_provider?: boolean
   record_id?: string
 }
 
@@ -51,26 +55,44 @@ function isMtn(phone: string) {
   return MTN_PREFIX_RE.test(phone)
 }
 
-/** Prefer DataMart credentials from provider slots, then dedicated datamart_api_key. */
+function providerSlots(settingsMap: Record<string, string>) {
+  return [
+    {
+      slug: 'primary' as const,
+      type: (settingsMap.data_provider_primary_type || '').trim().toLowerCase(),
+      name: settingsMap.data_provider_primary_name?.trim() || 'Primary',
+      apiKey: settingsMap.data_provider_primary_api_key?.trim() || '',
+    },
+    {
+      slug: 'secondary' as const,
+      type: (settingsMap.data_provider_secondary_type || '').trim().toLowerCase(),
+      name: settingsMap.data_provider_secondary_name?.trim() || 'Secondary',
+      apiKey: settingsMap.data_provider_secondary_api_key?.trim() || '',
+    },
+    {
+      slug: 'tertiary' as const,
+      type: (settingsMap.data_provider_tertiary_type || 'datahub').trim().toLowerCase(),
+      name: settingsMap.data_provider_tertiary_name?.trim() || 'Datahub',
+      apiKey: settingsMap.data_provider_tertiary_api_key?.trim() || '',
+    },
+  ]
+}
+
+function getDatahubProvider(settingsMap: Record<string, string>): ProviderCred | null {
+  const slots = providerSlots(settingsMap)
+  const tertiary = slots.find((s) => s.slug === 'tertiary' && s.type === 'datahub' && s.apiKey)
+  const any = slots.find((s) => s.type === 'datahub' && s.apiKey)
+  const picked = tertiary ?? any
+  if (picked) return { slug: picked.slug, name: picked.name || 'Datahub', apiKey: picked.apiKey }
+  const envKey = Deno.env.get('DATAHUB_API_KEY')?.trim() || ''
+  if (envKey) return { slug: 'tertiary', name: 'Datahub', apiKey: envKey }
+  return null
+}
+
 function getDatamartProvider(settingsMap: Record<string, string>): ProviderCred | null {
-  const primaryType = (settingsMap.data_provider_primary_type || '').trim().toLowerCase()
-  const secondaryType = (settingsMap.data_provider_secondary_type || '').trim().toLowerCase()
-
-  if (primaryType === 'datamart' && settingsMap.data_provider_primary_api_key?.trim()) {
-    return {
-      slug: 'primary',
-      name: settingsMap.data_provider_primary_name?.trim() || 'DataMart GH',
-      apiKey: settingsMap.data_provider_primary_api_key.trim(),
-    }
-  }
-  if (secondaryType === 'datamart' && settingsMap.data_provider_secondary_api_key?.trim()) {
-    return {
-      slug: 'secondary',
-      name: settingsMap.data_provider_secondary_name?.trim() || 'DataMart GH',
-      apiKey: settingsMap.data_provider_secondary_api_key.trim(),
-    }
-  }
-
+  const slots = providerSlots(settingsMap)
+  const slot = slots.find((s) => s.type === 'datamart' && s.apiKey)
+  if (slot) return { slug: slot.slug, name: slot.name || 'DataMart GH', apiKey: slot.apiKey }
   const dedicated = settingsMap.datamart_api_key?.trim() || ''
   if (dedicated) {
     return {
@@ -79,8 +101,46 @@ function getDatamartProvider(settingsMap: Record<string, string>): ProviderCred 
       apiKey: dedicated,
     }
   }
-
   return null
+}
+
+async function datahubVerifySingle(apiKey: string, phone: string, isPorted = false) {
+  const res = await fetch(`${DATAHUB_BASE}/purchases/verify-number`, {
+    method: 'POST',
+    headers: {
+      'X-API-Key': apiKey,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ phone, is_ported_number: isPorted }),
+  })
+  const body = await res.json().catch(() => ({}))
+  return { ok: res.ok, status: res.status, body: body as Record<string, unknown> }
+}
+
+async function datahubSubmitNumbers(apiKey: string, phones: string[]) {
+  const unique = [...new Set(phones.map(normalizePhone).filter(isMtn))]
+  const chunks: string[][] = []
+  for (let i = 0; i < unique.length; i += 30) chunks.push(unique.slice(i, i + 30))
+
+  const summaries: Array<Record<string, unknown>> = []
+  for (const chunk of chunks) {
+    const res = await fetch(`${DATAHUB_BASE}/purchases/submit-numbers`, {
+      method: 'POST',
+      headers: {
+        'X-API-Key': apiKey,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ numbers: chunk }),
+    })
+    const body = await res.json().catch(() => ({}))
+    summaries.push({
+      ok: res.ok,
+      status: res.status,
+      submitted: Boolean((body as Record<string, unknown>)?.success),
+      body,
+    })
+  }
+  return summaries
 }
 
 async function datamartVerifySingle(apiKey: string, phone: string) {
@@ -109,6 +169,19 @@ async function datamartVerifyBulk(apiKey: string, phones: string[]) {
   return { ok: res.ok, status: res.status, body: body as Record<string, unknown> }
 }
 
+async function mapPool<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const out: R[] = new Array(items.length)
+  let i = 0
+  const worker = async () => {
+    while (i < items.length) {
+      const idx = i++
+      out[idx] = await fn(items[idx])
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, () => worker()))
+  return out
+}
+
 function invalidResult(phone: string, message: string, providerName: string | null): CheckResult {
   return {
     phone,
@@ -125,7 +198,7 @@ function invalidResult(phone: string, message: string, providerName: string | nu
   }
 }
 
-function interpretSingle(
+function interpretDatahub(
   phone: string,
   provider: ProviderCred,
   result: { ok: boolean; status: number; body: Record<string, unknown> },
@@ -136,7 +209,98 @@ function interpretSingle(
   if (!isMtn(phone)) {
     return invalidResult(
       phone,
-      'Only MTN numbers can be verified (024, 054, 055, 059)',
+      'Only MTN numbers can be verified (024, 025, 053, 054, 055, 059)',
+      provider.name,
+    )
+  }
+
+  const body = result.body
+  const data = (body.data ?? {}) as Record<string, unknown>
+  const errorText = String(body.error ?? body.message ?? '')
+
+  if (result.status === 429 || /rate limit/i.test(errorText)) {
+    return {
+      phone,
+      valid: true,
+      verified: false,
+      servable: null,
+      recommendation: null,
+      status: 'error',
+      message: String(body.message ?? 'Too many requests — try again shortly'),
+      provider_exists: null,
+      provider_name: provider.name,
+      network: 'MTN',
+      cached: null,
+    }
+  }
+
+  if (result.status === 503 || /unavailable/i.test(errorText)) {
+    return {
+      phone,
+      valid: true,
+      verified: false,
+      servable: null,
+      recommendation: null,
+      status: 'error',
+      message: String(body.message ?? 'Verification temporarily unavailable — retry shortly'),
+      provider_exists: null,
+      provider_name: provider.name,
+      network: 'MTN',
+      cached: null,
+    }
+  }
+
+  const exists = data.exists === true
+  if (body.success === true && exists) {
+    return {
+      phone,
+      valid: true,
+      verified: true,
+      servable: true,
+      recommendation: 'sell_any',
+      status: 'verified',
+      message: String(data.message ?? 'Number verified successfully — you may sell any bundle size.'),
+      provider_exists: true,
+      provider_name: provider.name,
+      network: 'MTN',
+      cached: null,
+    }
+  }
+
+  const autoSubmitted = body.submittedToJessco === true
+  return {
+    phone,
+    valid: true,
+    verified: false,
+    servable: false,
+    recommendation: 'activate_first',
+    status: autoSubmitted ? 'submitted' : 'unverified',
+    message: String(
+      body.message ??
+        data.message ??
+        errorText ??
+        'Number is not on the beneficiary list. It has been submitted for approval.',
+    ),
+    provider_exists: false,
+    provider_name: provider.name,
+    network: 'MTN',
+    cached: null,
+    submitted_to_provider: autoSubmitted,
+  }
+}
+
+function interpretDatamartSingle(
+  phone: string,
+  provider: ProviderCred,
+  result: { ok: boolean; status: number; body: Record<string, unknown> },
+): CheckResult {
+  if (!PHONE_RE.test(phone)) {
+    return invalidResult(phone, 'Invalid Ghana phone. Use format 0241234567', provider.name)
+  }
+  if (!isMtn(phone)) {
+    return invalidResult(
+      phone,
+      'Only MTN numbers can be verified (024, 025, 053, 054, 055, 059)',
       provider.name,
     )
   }
@@ -231,21 +395,17 @@ function interpretSingle(
   }
 }
 
-function interpretBulkItem(
+function interpretDatamartBulkItem(
   raw: string,
   provider: ProviderCred,
   item: Record<string, unknown> | undefined,
 ): CheckResult {
   const phone = normalizePhone(String(item?.normalized ?? item?.number ?? raw))
   if (!PHONE_RE.test(phone)) {
-    return invalidResult(
-      phone || raw,
-      String(item?.reason ?? 'invalid_number'),
-      provider.name,
-    )
+    return invalidResult(phone || raw, String(item?.reason ?? 'invalid_number'), provider.name)
   }
   if (!isMtn(phone)) {
-    return invalidResult(phone, 'Only MTN numbers can be verified (024, 054, 055, 059)', provider.name)
+    return invalidResult(phone, 'Only MTN numbers can be verified (024, 025, 053, 054, 055, 059)', provider.name)
   }
 
   if (!item || item.normalized === null) {
@@ -294,7 +454,12 @@ async function upsertCheck(
     return check
   }
 
-  const status = check.verified ? 'verified' : 'unverified'
+  const status =
+    check.status === 'submitted' || check.status === 'pending'
+      ? check.status
+      : check.verified
+        ? 'verified'
+        : 'unverified'
   const payload = {
     user_id: userId,
     phone: check.phone,
@@ -313,6 +478,34 @@ async function upsertCheck(
     .eq('user_id', userId)
     .eq('phone', check.phone)
     .maybeSingle()
+
+  if (existing && check.verified) {
+    const { data } = await supabase
+      .from('number_verifications')
+      .update({
+        ...payload,
+        status: 'verified',
+        resolved_at: new Date().toISOString(),
+      })
+      .eq('id', existing.id)
+      .select('id')
+      .maybeSingle()
+    return { ...check, record_id: data?.id ?? existing.id }
+  }
+
+  if (existing && status === 'submitted') {
+    const { data } = await supabase
+      .from('number_verifications')
+      .update({
+        ...payload,
+        status: 'submitted',
+        requested_at: existing.requested_at ?? new Date().toISOString(),
+      })
+      .eq('id', existing.id)
+      .select('id')
+      .maybeSingle()
+    return { ...check, status: 'submitted', record_id: data?.id ?? existing.id }
+  }
 
   if (existing && !check.verified && (existing.status === 'pending' || existing.status === 'submitted')) {
     const { data } = await supabase
@@ -334,20 +527,6 @@ async function upsertCheck(
     }
   }
 
-  if (existing && check.verified) {
-    const { data } = await supabase
-      .from('number_verifications')
-      .update({
-        ...payload,
-        status: 'verified',
-        resolved_at: new Date().toISOString(),
-      })
-      .eq('id', existing.id)
-      .select('id')
-      .maybeSingle()
-    return { ...check, record_id: data?.id ?? existing.id }
-  }
-
   const { data, error } = await supabase
     .from('number_verifications')
     .upsert(payload, { onConflict: 'user_id,phone' })
@@ -359,6 +538,44 @@ async function upsertCheck(
   }
 
   return { ...check, record_id: data?.id }
+}
+
+async function applyVerificationWebhook(
+  supabase: ReturnType<typeof createClient>,
+  body: Record<string, unknown>,
+) {
+  const data = (body.data ?? body) as Record<string, unknown>
+  const phone = normalizePhone(
+    String(data.phone ?? data.phoneNumber ?? body.phone ?? body.phoneNumber ?? ''),
+  )
+  if (!phone || !PHONE_RE.test(phone)) {
+    return { handled: false, reason: 'no phone' }
+  }
+
+  const exists =
+    data.exists === true ||
+    data.verified === true ||
+    String(data.status ?? body.status ?? '').toLowerCase() === 'verified'
+  const now = new Date().toISOString()
+  const message = String(
+    data.message ?? body.message ?? (exists ? 'Verified via Datahub webhook' : 'Updated via Datahub webhook'),
+  )
+
+  const { data: rows } = await supabase
+    .from('number_verifications')
+    .update({
+      status: exists ? 'verified' : 'unverified',
+      provider_exists: exists,
+      provider_message: message,
+      provider_name: 'Datahub',
+      checked_at: now,
+      resolved_at: exists ? now : null,
+      updated_at: now,
+    })
+    .eq('phone', phone)
+    .select('id')
+
+  return { handled: true, phone, exists, updated: rows?.length ?? 0 }
 }
 
 Deno.serve(async (req) => {
@@ -392,21 +609,29 @@ Deno.serve(async (req) => {
 
     const { data: settings } = await supabase.from('site_settings').select('key, value')
     const settingsMap = Object.fromEntries((settings ?? []).map((s) => [s.key, s.value]))
-    const provider = getDatamartProvider(settingsMap)
+    const datahub = getDatahubProvider(settingsMap)
+    const datamart = getDatamartProvider(settingsMap)
+
+    if (req.method === 'POST' && (path === '/webhook' || path.includes('provider-webhook'))) {
+      const body = (await req.json().catch(() => ({}))) as Record<string, unknown>
+      const applied = await applyVerificationWebhook(supabase, body)
+      return json({ success: true, ...applied })
+    }
 
     if (req.method === 'POST' && (path === '/check' || path === '/' || path === '/bulk')) {
-      if (!provider?.apiKey) {
+      if (!datahub?.apiKey && !datamart?.apiKey) {
         return json(
           {
             success: false,
             error:
-              'DataMart API key is not configured. Set primary or secondary provider type to DataMart GH in Admin → Site Settings.',
+              'No number-verification provider is configured. Add a Datahub key on the tertiary slot or a DataMart API key in Admin → Site Settings.',
           },
           503,
         )
       }
 
       const body = await req.json().catch(() => ({}))
+      const isPorted = Boolean(body.is_ported_number ?? body.isPorted)
       const rawPhones: string[] = Array.isArray(body.phones)
         ? body.phones.map(String)
         : Array.isArray(body.numbers)
@@ -431,28 +656,35 @@ Deno.serve(async (req) => {
       }
 
       const results: CheckResult[] = []
-
-      // Local MTN filter first
       const toCheck: string[] = []
+      const providerName = datahub?.name ?? datamart?.name ?? null
       for (const phone of phones) {
         if (!PHONE_RE.test(phone)) {
-          results.push(invalidResult(phone, 'Invalid Ghana phone. Use format 0241234567', provider.name))
+          results.push(invalidResult(phone, 'Invalid Ghana phone. Use format 0241234567', providerName))
         } else if (!isMtn(phone)) {
           results.push(
-            invalidResult(phone, 'Only MTN numbers can be verified (024, 054, 055, 059)', provider.name),
+            invalidResult(phone, 'Only MTN numbers can be verified (024, 025, 053, 054, 055, 059)', providerName),
           )
         } else {
           toCheck.push(phone)
         }
       }
 
-      if (toCheck.length === 1 && path !== '/bulk') {
-        const upstream = await datamartVerifySingle(provider.apiKey, toCheck[0])
-        const interpreted = interpretSingle(toCheck[0], provider, upstream)
-        results.push(await upsertCheck(supabase, userId, interpreted))
-      } else if (toCheck.length > 0) {
-        // Prefer bulk endpoint (higher rate limit) for 2+ numbers or explicit /bulk
-        const upstream = await datamartVerifyBulk(provider.apiKey, toCheck)
+      const useDatahub = Boolean(datahub?.apiKey)
+
+      if (useDatahub && toCheck.length > 0) {
+        const checked = await mapPool(toCheck, 5, async (phone) => {
+          const upstream = await datahubVerifySingle(datahub!.apiKey, phone, isPorted)
+          return interpretDatahub(phone, datahub!, upstream)
+        })
+        for (const item of checked) {
+          results.push(await upsertCheck(supabase, userId, item))
+        }
+      } else if (datamart?.apiKey && toCheck.length === 1 && path !== '/bulk') {
+        const upstream = await datamartVerifySingle(datamart.apiKey, toCheck[0])
+        results.push(await upsertCheck(supabase, userId, interpretDatamartSingle(toCheck[0], datamart, upstream)))
+      } else if (datamart?.apiKey && toCheck.length > 0) {
+        const upstream = await datamartVerifyBulk(datamart.apiKey, toCheck)
         if (upstream.status === 429) {
           return json(
             {
@@ -465,10 +697,9 @@ Deno.serve(async (req) => {
           )
         }
         if (!upstream.ok && upstream.body.status !== 'success') {
-          // Fall back to sequential single checks if bulk fails (capped)
           for (const phone of toCheck.slice(0, 2)) {
-            const one = await datamartVerifySingle(provider.apiKey, phone)
-            results.push(await upsertCheck(supabase, userId, interpretSingle(phone, provider, one)))
+            const one = await datamartVerifySingle(datamart.apiKey, phone)
+            results.push(await upsertCheck(supabase, userId, interpretDatamartSingle(phone, datamart, one)))
           }
           for (const phone of toCheck.slice(2)) {
             results.push({
@@ -480,7 +711,7 @@ Deno.serve(async (req) => {
               status: 'error',
               message: 'Bulk verify failed; retry these numbers separately',
               provider_exists: null,
-              provider_name: provider.name,
+              provider_name: datamart.name,
               network: 'MTN',
               cached: null,
             })
@@ -504,26 +735,29 @@ Deno.serve(async (req) => {
                   normalizePhone(String(r.normalized ?? '')) === phone ||
                   normalizePhone(String(r.number ?? '')) === phone,
               )
-            results.push(await upsertCheck(supabase, userId, interpretBulkItem(phone, provider, item)))
+            results.push(await upsertCheck(supabase, userId, interpretDatamartBulkItem(phone, datamart, item)))
           }
         }
       }
 
       const verified = results.filter((r) => r.verified).length
-      const unverified = results.filter((r) => r.status === 'unverified').length
+      const unverified = results.filter((r) => r.status === 'unverified' || r.status === 'submitted').length
+      const engine = useDatahub ? 'datahub' : 'datamart'
+      const engineName = useDatahub ? datahub!.name : datamart!.name
+      const engineSlug = useDatahub ? datahub!.slug : datamart!.slug
 
       return json({
         success: true,
-        provider: 'datamart',
-        active_provider: provider.slug,
-        provider_name: provider.name,
+        provider: engine,
+        active_provider: engineSlug,
+        provider_name: engineName,
         checked: results.length,
         verified,
         unverified,
         sell_any: results.filter((r) => r.recommendation === 'sell_any').length,
         activate_first: results.filter((r) => r.recommendation === 'activate_first').length,
         results,
-        summary: (path === '/bulk' || phones.length > 1)
+        summary: path === '/bulk' || phones.length > 1
           ? {
               total: results.length,
               accepted: verified,
@@ -556,13 +790,14 @@ Deno.serve(async (req) => {
       }
 
       const results = []
+      const toSubmit: string[] = []
       for (const raw of phones) {
         const phone = normalizePhone(raw)
         if (!isMtn(phone)) {
           results.push({
             phone,
             success: false,
-            error: 'Only MTN numbers can be submitted (024, 054, 055, 059)',
+            error: 'Only MTN numbers can be submitted (024, 025, 053, 054, 055, 059)',
           })
           continue
         }
@@ -571,22 +806,50 @@ Deno.serve(async (req) => {
           p_phone: phone,
           p_note: note,
         })
+        if (!error) toSubmit.push(phone)
         results.push(error ? { phone, success: false, error: error.message } : data)
       }
 
-      return json({ success: true, results })
+      let datahubSubmit: unknown = null
+      if (datahub?.apiKey && toSubmit.length > 0) {
+        datahubSubmit = await datahubSubmitNumbers(datahub.apiKey, toSubmit)
+        await supabase
+          .from('number_verifications')
+          .update({
+            status: 'submitted',
+            provider_name: datahub.name,
+            provider_message: 'Submitted to Datahub for beneficiary approval',
+            updated_at: new Date().toISOString(),
+          })
+          .eq('user_id', userId)
+          .in('phone', toSubmit)
+          .in('status', ['pending', 'unverified', 'submitted'])
+      }
+
+      return json({ success: true, provider: datahub ? 'datahub' : 'local', results, datahub_submit: datahubSubmit })
     }
 
     if (req.method === 'GET' && path === '/health') {
-      if (!provider?.apiKey) {
-        return json({ success: false, error: 'DataMart API key not configured' }, 503)
+      if (datahub?.apiKey) {
+        const upstream = await datahubVerifySingle(datahub.apiKey, '0241234567')
+        return json({
+          success: true,
+          provider: 'datahub',
+          active_provider: datahub.slug,
+          provider_name: datahub.name,
+          upstream_status: upstream.status,
+          upstream: upstream.body,
+        })
       }
-      const upstream = await datamartVerifySingle(provider.apiKey, '0241234567')
+      if (!datamart?.apiKey) {
+        return json({ success: false, error: 'No Datahub or DataMart API key configured' }, 503)
+      }
+      const upstream = await datamartVerifySingle(datamart.apiKey, '0241234567')
       return json({
         success: true,
         provider: 'datamart',
-        active_provider: provider.slug,
-        provider_name: provider.name,
+        active_provider: datamart.slug,
+        provider_name: datamart.name,
         upstream_status: upstream.status,
         upstream: upstream.body,
       })
@@ -595,10 +858,11 @@ Deno.serve(async (req) => {
     return json({
       success: true,
       endpoints: {
-        'POST /check': 'Verify one or more MTN numbers via DataMart (uses bulk when 2+)',
-        'POST /bulk': 'Bulk verify up to 100 MTN numbers via DataMart',
-        'POST /request': 'Queue activate_first numbers for admin follow-up (auth required)',
-        'GET /health': 'Check DataMart verify-number connectivity',
+        'POST /check': 'Verify MTN numbers via Datahub (falls back to DataMart)',
+        'POST /bulk': 'Bulk verify up to 100 MTN numbers',
+        'POST /request': 'Submit unverified numbers to Datahub /purchases/submit-numbers (auth required)',
+        'POST /webhook': 'Receive Datahub number-verification callbacks if sent',
+        'GET /health': 'Check Datahub (or DataMart) verify-number connectivity',
       },
     })
   } catch (e) {

@@ -67,7 +67,7 @@ export default function AdminNumberVerificationsPage() {
     <div className="space-y-6 md:space-y-8">
       <PageHeader
         title="Number Verifications"
-        description="Users request MTN activation follow-up after DataMart returns activate_first. Mark numbers as submitted or verified here."
+        description="Users request MTN activation follow-up after Datahub/DataMart returns unverified. Unverified numbers are also submitted to Datahub automatically."
       />
 
       <div className="flex flex-wrap gap-3 items-center">

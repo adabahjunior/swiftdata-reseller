@@ -2,7 +2,8 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.49.1'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-datahub-signature',
+  'Access-Control-Allow-Headers':
+    'authorization, x-client-info, apikey, content-type, x-datahub-signature, x-webhook-signature',
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
 }
 
@@ -36,10 +37,18 @@ function mapProviderStatus(raw: string): { providerStatus: string; orderStatus: 
   if (['failed', 'failure', 'error', 'cancelled', 'canceled'].includes(s)) {
     return { providerStatus: 'failed', orderStatus: 'failed' }
   }
-  if (['processing', 'in_progress', 'in-progress', 'pending', 'submitted', 'waiting'].includes(s)) {
+  if (['processing', 'in_progress', 'in-progress', 'pending', 'submitted', 'waiting', 'initiated'].includes(s)) {
     return {
       providerStatus:
-        s === 'pending' ? 'pending' : s === 'submitted' ? 'submitted' : s === 'waiting' ? 'waiting' : 'processing',
+        s === 'pending'
+          ? 'pending'
+          : s === 'submitted'
+            ? 'submitted'
+            : s === 'waiting'
+              ? 'waiting'
+              : s === 'initiated'
+                ? 'initiated'
+                : 'processing',
       orderStatus: 'processing',
     }
   }
@@ -126,30 +135,69 @@ function credentialForType(
   settingsMap: Record<string, string>,
   type: 'datahub' | 'skplug' | 'datamart',
 ) {
-  const primaryType = (settingsMap.data_provider_primary_type || 'datahub').trim().toLowerCase()
-  const secondaryType = (settingsMap.data_provider_secondary_type || 'skplug').trim().toLowerCase()
-  if (primaryType === type) return settingsMap.data_provider_primary_api_key?.trim() || ''
-  if (secondaryType === type) return settingsMap.data_provider_secondary_api_key?.trim() || ''
-  // Fallbacks when type labels drifted from keys
-  if (type === 'skplug') {
-    return (
-      settingsMap.data_provider_secondary_api_key?.trim() ||
-      settingsMap.data_provider_primary_api_key?.trim() ||
-      ''
-    )
-  }
-  if (type === 'datamart') {
-    return (
-      settingsMap.data_provider_primary_api_key?.trim() ||
-      settingsMap.data_provider_secondary_api_key?.trim() ||
-      ''
-    )
-  }
-  return (
-    settingsMap.data_provider_primary_api_key?.trim() ||
-    settingsMap.data_provider_secondary_api_key?.trim() ||
-    ''
+  const slots: Array<{ type: string; key: string }> = [
+    {
+      type: (settingsMap.data_provider_primary_type || 'datahub').trim().toLowerCase(),
+      key: settingsMap.data_provider_primary_api_key?.trim() || '',
+    },
+    {
+      type: (settingsMap.data_provider_secondary_type || 'skplug').trim().toLowerCase(),
+      key: settingsMap.data_provider_secondary_api_key?.trim() || '',
+    },
+    {
+      type: (settingsMap.data_provider_tertiary_type || 'datahub').trim().toLowerCase(),
+      key: settingsMap.data_provider_tertiary_api_key?.trim() || '',
+    },
+  ]
+  const match = slots.find((s) => s.type === type && s.key)
+  if (match?.key) return match.key
+
+  if (type === 'datamart') return settingsMap.datamart_api_key?.trim() || ''
+  if (type === 'datahub') return Deno.env.get('DATAHUB_API_KEY')?.trim() || ''
+  return slots.map((s) => s.key).find(Boolean) || ''
+}
+
+function hexFromBuffer(buf: ArrayBuffer) {
+  return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('')
+}
+
+async function hmacSha256Hex(secret: string, payload: string) {
+  const enc = new TextEncoder()
+  const key = await crypto.subtle.importKey(
+    'raw',
+    enc.encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
   )
+  const sig = await crypto.subtle.sign('HMAC', key, enc.encode(payload))
+  return hexFromBuffer(sig)
+}
+
+function timingSafeEqual(a: string, b: string) {
+  if (a.length !== b.length) return false
+  let mismatch = 0
+  for (let i = 0; i < a.length; i++) mismatch |= a.charCodeAt(i) ^ b.charCodeAt(i)
+  return mismatch === 0
+}
+
+async function verifyDatahubSignature(req: Request, rawBody: string, secret: string) {
+  if (!secret) return true
+  const header =
+    req.headers.get('x-webhook-signature') ??
+    req.headers.get('X-Webhook-Signature') ??
+    req.headers.get('x-datahub-signature') ??
+    ''
+  if (!header) return true
+  const provided = header.replace(/^sha256=/i, '').trim().toLowerCase()
+  const expected = (await hmacSha256Hex(secret, rawBody)).toLowerCase()
+  return timingSafeEqual(provided, expected)
+}
+
+function shouldApplyOrderStatus(current: string, next: string | null) {
+  if (!next || next === current) return false
+  if (current === 'completed' && next === 'processing') return false
+  return true
 }
 
 async function syncOrderStatus(
@@ -200,7 +248,7 @@ async function syncOrderStatus(
     provider_status: mapped.providerStatus,
   }
 
-  if (mapped.orderStatus && mapped.orderStatus !== order.status) {
+  if (mapped.orderStatus && shouldApplyOrderStatus(order.status, mapped.orderStatus)) {
     update.status = mapped.orderStatus
     if (mapped.orderStatus === 'completed') {
       update.completed_at = new Date().toISOString()
@@ -265,7 +313,22 @@ Deno.serve(async (req) => {
 
   try {
     if (isWebhook && req.method === 'POST') {
-      const body = await req.json().catch(() => ({})) as Record<string, unknown>
+      const rawBody = await req.text()
+      const body = (() => {
+        try {
+          return JSON.parse(rawBody || '{}') as Record<string, unknown>
+        } catch {
+          return {} as Record<string, unknown>
+        }
+      })()
+
+      const { data: settings } = await supabase.from('site_settings').select('key, value')
+      const settingsMap = Object.fromEntries((settings ?? []).map((s) => [s.key, s.value]))
+      const secret = settingsMap.datahub_webhook_secret?.trim() || ''
+      if (!(await verifyDatahubSignature(req, rawBody, secret))) {
+        return json({ success: false, error: 'Invalid webhook signature' }, 401)
+      }
+
       const { reference, orderNumber, status } = extractWebhookPayload(body)
 
       if (!status) {
@@ -290,7 +353,7 @@ Deno.serve(async (req) => {
       const update: Record<string, unknown> = {
         provider_status: mapped.providerStatus,
       }
-      if (mapped.orderStatus) {
+      if (mapped.orderStatus && shouldApplyOrderStatus(order.status, mapped.orderStatus)) {
         update.status = mapped.orderStatus
         if (mapped.orderStatus === 'completed') update.completed_at = new Date().toISOString()
         if (mapped.orderStatus === 'failed') update.failure_reason = `Provider webhook: ${status}`
