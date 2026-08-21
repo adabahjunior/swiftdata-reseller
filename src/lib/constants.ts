@@ -73,7 +73,10 @@ export const ORDER_STATUS_STYLES: Record<string, string> = {
   failed: 'bg-red-500/15 text-red-400 border-red-500/30',
 }
 
-export const NAV_GROUPS = [
+export type NavItemDef = { label: string; to: string; icon: string }
+export type NavGroupDef = { id: string; label: string; items: NavItemDef[] }
+
+export const NAV_GROUPS: NavGroupDef[] = [
   {
     id: 'main',
     label: 'Main',
@@ -118,7 +121,7 @@ export const NAV_GROUPS = [
       { label: 'Settings', to: '/dashboard/settings', icon: 'Settings' },
     ],
   },
-] as const
+]
 
 /** Flat list kept for any callers that still map all routes */
-export const NAV_ITEMS = NAV_GROUPS.flatMap((g) => g.items)
+export const NAV_ITEMS: NavItemDef[] = NAV_GROUPS.flatMap((g) => g.items)

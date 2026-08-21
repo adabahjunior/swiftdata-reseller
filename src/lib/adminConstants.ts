@@ -1,4 +1,6 @@
-export const ADMIN_NAV_GROUPS = [
+import type { NavGroupDef, NavItemDef } from './constants'
+
+export const ADMIN_NAV_GROUPS: NavGroupDef[] = [
   {
     id: 'main',
     label: 'Main',
@@ -39,9 +41,9 @@ export const ADMIN_NAV_GROUPS = [
       { label: 'Site Settings', to: '/admin/settings', icon: 'Settings' },
     ],
   },
-] as const
+]
 
-export const ADMIN_NAV_ITEMS = ADMIN_NAV_GROUPS.flatMap((g) => g.items)
+export const ADMIN_NAV_ITEMS: NavItemDef[] = ADMIN_NAV_GROUPS.flatMap((g) => g.items)
 
 export const ADMIN_PAGE_TITLES: Record<string, string> = {
   '/admin': 'Admin Overview',
