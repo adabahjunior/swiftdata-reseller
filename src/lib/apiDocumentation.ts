@@ -14,11 +14,11 @@ export const DOC_ENDPOINTS: DocEndpoint[] = [
     method: 'GET',
     path: '/v1/health',
     title: 'Health Check',
-    description: 'Returns API status and supported network IDs. No balance required.',
+    description: 'Returns API status and supported network IDs. No API key required for this probe in some setups; still send your key in production clients.',
     response: `{
   "success": true,
   "status": "operational",
-  "timestamp": "2026-06-23T12:00:00.000Z",
+  "timestamp": "2026-08-21T12:00:00.000Z",
   "networks": ["yello", "at_ishare", "at_bigtime", "telecel"]
 }`,
   },
@@ -37,7 +37,8 @@ export const DOC_ENDPOINTS: DocEndpoint[] = [
     method: 'GET',
     path: '/v1/packages',
     title: 'List Packages',
-    description: 'Returns all active data packages with network IDs and labels.',
+    description:
+      'Returns all active data packages (including any custom prices assigned to your account) with network IDs and labels.',
     response: `{
   "success": true,
   "networks": [
@@ -62,7 +63,7 @@ export const DOC_ENDPOINTS: DocEndpoint[] = [
     path: '/v1/buy-data',
     title: 'Buy Data',
     description:
-      'Purchase a data bundle for a Ghana phone number. Deducts from your API balance instantly.',
+      'Purchase a data bundle for a Ghana phone number. Deducts from your API balance instantly, then forwards the order to the active fulfillment provider. Status may start as pending/processing — poll GET /v1/orders/{reference} until completed or failed. Prefer verifying MTN numbers first with /v1/verify-number.',
     body: `{
   "phone": "0241234567",
   "network": "yello",
@@ -73,12 +74,15 @@ export const DOC_ENDPOINTS: DocEndpoint[] = [
   "success": true,
   "order": {
     "reference": "ORD-ABC123XYZ",
+    "service_type": "data",
     "phone": "0241234567",
     "network": "yello",
     "network_label": "Yello",
     "size_gb": 1,
     "amount": 4.50,
-    "status": "completed"
+    "status": "pending",
+    "created_at": "2026-08-21T12:00:00.000Z",
+    "completed_at": null
   }
 }`,
   },
@@ -87,7 +91,7 @@ export const DOC_ENDPOINTS: DocEndpoint[] = [
     path: '/v1/utility-products',
     title: 'List Utility Products',
     description:
-      'Returns active Airtime / ECG / TV products. Optional ?type=airtime|ecg|tv filter.',
+      'Returns active Airtime / ECG / TV products. Optional query: ?type=airtime|ecg|tv.',
     response: `{
   "success": true,
   "products": [
@@ -107,7 +111,8 @@ export const DOC_ENDPOINTS: DocEndpoint[] = [
     method: 'POST',
     path: '/v1/buy-airtime',
     title: 'Buy Airtime',
-    description: 'Top up a Ghana mobile number via Xcel. Deducts wallet (face amount + markup/fees).',
+    description:
+      'Top up a Ghana mobile number. Wallet is charged face amount + markup/fees. Poll the returned reference for delivery status.',
     body: `{
   "phone": "0241234567",
   "provider_code": "MTN",
@@ -123,7 +128,10 @@ export const DOC_ENDPOINTS: DocEndpoint[] = [
     "beneficiary": "0241234567",
     "face_amount": 10,
     "amount": 10,
-    "status": "pending"
+    "status": "pending",
+    "created_at": "2026-08-21T12:00:00.000Z",
+    "completed_at": null,
+    "utility_meta": {}
   }
 }`,
   },
@@ -131,7 +139,8 @@ export const DOC_ENDPOINTS: DocEndpoint[] = [
     method: 'POST',
     path: '/v1/buy-ecg',
     title: 'Pay ECG',
-    description: 'Pay ECG prepaid/postpaid. On success, utility_meta.token may contain the prepaid token.',
+    description:
+      'Pay ECG prepaid/postpaid. On success, utility_meta.token may contain the prepaid token once fulfillment completes.',
     body: `{
   "meter": "70012236413",
   "provider_code": "ecg2",
@@ -147,7 +156,10 @@ export const DOC_ENDPOINTS: DocEndpoint[] = [
     "beneficiary": "70012236413",
     "face_amount": 20,
     "amount": 20,
-    "status": "pending"
+    "status": "pending",
+    "created_at": "2026-08-21T12:00:00.000Z",
+    "completed_at": null,
+    "utility_meta": {}
   }
 }`,
   },
@@ -155,7 +167,7 @@ export const DOC_ENDPOINTS: DocEndpoint[] = [
     method: 'POST',
     path: '/v1/buy-tv',
     title: 'TV Subscription Payment',
-    description: 'Pay DSTV / GOtv / StarTimes / Box Office smartcard via Xcel.',
+    description: 'Pay DSTV / GOtv / StarTimes / Box Office smartcard.',
     body: `{
   "smartcard": "8059853119",
   "provider_code": "DSTV",
@@ -171,7 +183,10 @@ export const DOC_ENDPOINTS: DocEndpoint[] = [
     "beneficiary": "8059853119",
     "face_amount": 50,
     "amount": 50,
-    "status": "pending"
+    "status": "pending",
+    "created_at": "2026-08-21T12:00:00.000Z",
+    "completed_at": null,
+    "utility_meta": {}
   }
 }`,
   },
@@ -180,7 +195,7 @@ export const DOC_ENDPOINTS: DocEndpoint[] = [
     path: '/v1/verify-number',
     title: 'Verify MTN Number',
     description:
-      'Pre-check one MTN number via Datahub before selling data. MTN prefixes 024/025/053/054/055/059. Returns servable + recommendation (sell_any | activate_first). Unverified numbers are submitted to Datahub automatically.',
+      'Pre-check one MTN beneficiary via Datahub before selling data. Allowed prefixes: 024, 025, 053, 054, 055. Returns servable + recommendation (sell_any | activate_first). Unverified numbers are submitted for beneficiary approval automatically when the provider supports it. Also accepts phones[] / numbers[] (same as bulk when more than one).',
     body: `{
   "phone": "0241234567"
 }`,
@@ -210,7 +225,7 @@ export const DOC_ENDPOINTS: DocEndpoint[] = [
     path: '/v1/verify-number/bulk',
     title: 'Verify MTN Numbers (Bulk)',
     description:
-      'Pre-check up to 100 MTN numbers via Datahub. Non-MTN numbers are rejected locally. Also accepts phones[] on /v1/verify-number.'
+      'Pre-check up to 100 MTN numbers via Datahub. Non-MTN numbers are rejected locally. Body accepts phones[], numbers[], or a single phone. Same result shape as /v1/verify-number.',
     body: `{
   "phones": ["0241234567", "0559876543", "0271112233"]
 }`,
@@ -240,7 +255,7 @@ export const DOC_ENDPOINTS: DocEndpoint[] = [
       "phone": "0271112233",
       "valid": false,
       "status": "invalid",
-      "message": "Only MTN numbers can be verified (024, 054, 055, 059)"
+      "message": "Only MTN numbers can be verified (024, 025, 053, 054, 055)"
     }
   ]
 }`,
@@ -249,19 +264,34 @@ export const DOC_ENDPOINTS: DocEndpoint[] = [
     method: 'GET',
     path: '/v1/orders',
     title: 'List Orders',
-    description: 'Returns your API orders. Supports ?limit=50&offset=0 query params.',
+    description:
+      'Returns your orders (data + utilities). Supports ?limit=50&offset=0 (limit max 100). Timestamps are ISO-8601 UTC; the dashboard displays them in Africa/Accra (GMT).',
     response: `{
   "success": true,
   "orders": [
     {
       "reference": "ORD-ABC123",
+      "service_type": "data",
       "phone": "0241234567",
       "network": "at_ishare",
       "network_label": "AirtelTigo iShare",
       "size_gb": 2,
       "amount": 7.50,
       "status": "completed",
-      "created_at": "2026-06-23T12:00:00.000Z"
+      "created_at": "2026-08-21T12:00:00.000Z",
+      "completed_at": "2026-08-21T12:03:12.000Z"
+    },
+    {
+      "reference": "UTL-AIR456",
+      "service_type": "airtime",
+      "provider_code": "MTN",
+      "beneficiary": "0241234567",
+      "face_amount": 10,
+      "amount": 10,
+      "status": "completed",
+      "created_at": "2026-08-21T11:00:00.000Z",
+      "completed_at": "2026-08-21T11:01:05.000Z",
+      "utility_meta": {}
     }
   ]
 }`,
@@ -270,17 +300,21 @@ export const DOC_ENDPOINTS: DocEndpoint[] = [
     method: 'GET',
     path: '/v1/orders/{reference}',
     title: 'Get Order',
-    description: 'Get a single order by its reference. Poll until status is completed or failed.',
+    description:
+      'Get a single order by reference. Poll until status is completed or failed. Live delivery pace on the dashboard is site-wide and independent of this endpoint.',
     response: `{
   "success": true,
   "order": {
     "reference": "ORD-ABC123",
+    "service_type": "data",
     "phone": "0241234567",
     "network": "telecel",
     "network_label": "Telecel",
     "size_gb": 1,
     "amount": 4.20,
-    "status": "completed"
+    "status": "completed",
+    "created_at": "2026-08-21T12:00:00.000Z",
+    "completed_at": "2026-08-21T12:02:40.000Z"
   }
 }`,
   },
@@ -288,9 +322,30 @@ export const DOC_ENDPOINTS: DocEndpoint[] = [
 
 export const DOC_ERROR_CODES = [
   { code: 401, meaning: 'Missing or invalid API key' },
-  { code: 400, meaning: 'Bad request — invalid phone, missing network/size_gb, insufficient balance' },
+  {
+    code: 400,
+    meaning:
+      'Bad request — invalid phone, missing network/size_gb/amount, max 100 verify numbers, or insufficient balance',
+  },
   { code: 404, meaning: 'Order or endpoint not found' },
+  { code: 502, meaning: 'Upstream provider verification/fulfillment failed' },
   { code: 500, meaning: 'Internal server error' },
+]
+
+export const DOC_VERIFY_STATUSES = [
+  { status: 'verified', meaning: 'On beneficiary list — safe to sell (sell_any)' },
+  { status: 'unverified', meaning: 'Not yet approved — activate_first / wait before large bundles' },
+  { status: 'submitted', meaning: 'Queued with the provider for beneficiary approval' },
+  { status: 'pending', meaning: 'Awaiting provider update' },
+  { status: 'invalid', meaning: 'Wrong format or non-MTN prefix' },
+  { status: 'error', meaning: 'Provider/API error for that number' },
+]
+
+export const DOC_ORDER_STATUSES = [
+  { status: 'pending', meaning: 'Accepted & queued for provider fulfillment' },
+  { status: 'processing', meaning: 'Being delivered by the provider' },
+  { status: 'completed', meaning: 'Delivered (or marked delivered locally)' },
+  { status: 'failed', meaning: 'Failed — check dashboard / open a ticket if needed' },
 ]
 
 /** Full API docs as plain text (for clipboard copy). */
@@ -298,11 +353,7 @@ export function buildApiDocsText(): string {
   const networks = API_NETWORKS.map((n) => `  ${n.id.padEnd(14)} ${n.label}`).join('\n')
 
   const endpoints = DOC_ENDPOINTS.map((ep) => {
-    const parts = [
-      `${ep.method} ${API_BASE_URL}${ep.path}`,
-      ep.title,
-      ep.description,
-    ]
+    const parts = [`${ep.method} ${API_BASE_URL}${ep.path}`, ep.title, ep.description]
     if (ep.body) {
       parts.push('', 'Request Body:', ep.body)
     }
@@ -311,6 +362,12 @@ export function buildApiDocsText(): string {
   }).join('\n\n' + '─'.repeat(48) + '\n\n')
 
   const errors = DOC_ERROR_CODES.map((e) => `  ${e.code}  ${e.meaning}`).join('\n')
+  const orderStatuses = DOC_ORDER_STATUSES.map((s) => `  ${s.status.padEnd(12)} ${s.meaning}`).join(
+    '\n',
+  )
+  const verifyStatuses = DOC_VERIFY_STATUSES.map(
+    (s) => `  ${s.status.padEnd(12)} ${s.meaning}`,
+  ).join('\n')
 
   return `SwiftData Reseller — API Documentation
 ========================================
@@ -327,23 +384,44 @@ Generate a key from My API in your dashboard.
   Authorization: Bearer sk_live_your_api_key
   Content-Type: application/json
 
-Supported Networks
-------------------
+Supported Networks (data)
+------------------------
 Network ID      Label
 ${networks}
 
 Note: Yello packages are stored internally as MTN. API responses use "yello";
 dashboard orders show "mtn".
 
+MTN number verification prefixes
+--------------------------------
+Only these local prefixes are accepted by /v1/verify-number:
+  024, 025, 053, 054, 055
+
+Timestamps
+----------
+API timestamps are ISO-8601 UTC. The reseller dashboard displays times in
+Africa/Accra (GMT, no daylight saving).
+
+Delivery
+--------
+After buy-data / utilities, orders are fulfilled by the active provider stack.
+Poll GET /v1/orders/{reference}. The dashboard Live delivery strip shows
+site-wide average pace (not per-user).
+
 Quick Start
 -----------
 1. Top up via MoMo — see My API Balance for instructions and your 5-digit code
 2. Generate an API key from My API
 3. GET /v1/packages — list available network + size_gb bundles
-4. POST /v1/buy-data — purchase data
-5. GET /v1/orders/{reference} — confirm delivery
-6. POST /v1/verify-number — pre-check one MTN number (Datahub)
-7. POST /v1/verify-number/bulk — pre-check up to 100 MTN numbers
+4. POST /v1/verify-number — pre-check MTN numbers (024/025/053/054/055)
+5. POST /v1/buy-data — purchase data
+6. GET /v1/orders/{reference} — confirm delivery
+7. GET /v1/utility-products + POST /v1/buy-airtime|/buy-ecg|/buy-tv — utilities
+
+Dashboard (non-API)
+-------------------
+Tickets, returning customers, and analytics live in the dashboard UI and are
+not exposed as public REST endpoints.
 
 Endpoints
 ---------
@@ -355,7 +433,11 @@ ${errors}
 
 Order Status Values
 -------------------
-  pending, processing, completed, failed
+${orderStatuses}
+
+Verify Status Values
+--------------------
+${verifyStatuses}
 
 Examples
 --------
@@ -397,7 +479,17 @@ Bulk verify MTN numbers:
   curl -X POST "${API_BASE_URL}/v1/verify-number/bulk" \\
     -H "Authorization: Bearer sk_live_your_api_key" \\
     -H "Content-Type: application/json" \\
-    -d '{"phones":["0241234567","0559876543"]}'
+    -d '{"phones":["0241234567","0559876543","0538122730"]}'
+
+Buy MTN airtime:
+  curl -X POST "${API_BASE_URL}/v1/buy-airtime" \\
+    -H "Authorization: Bearer sk_live_your_api_key" \\
+    -H "Content-Type: application/json" \\
+    -d '{
+      "phone": "0241234567",
+      "provider_code": "MTN",
+      "amount": 10
+    }'
 `
 }
 
@@ -445,7 +537,7 @@ function buildTextPdf(text: string): Blob {
   const offsets: number[] = [0]
 
   const addObject = (content: string) => {
-    offsets.push(0) // filled later
+    offsets.push(0)
     objects.push(content)
     return objects.length
   }
@@ -484,7 +576,6 @@ function buildTextPdf(text: string): Blob {
   const pagesId = addObject(`<< /Type /Pages /Kids [${kids}] /Count ${pageIds.length} >>`)
   const catalogId = addObject(`<< /Type /Catalog /Pages ${pagesId} 0 R >>`)
 
-  // Patch page parent refs
   for (let i = 0; i < objects.length; i++) {
     objects[i] = objects[i].replace(/PAGES_REF/g, `${pagesId} 0 R`)
   }

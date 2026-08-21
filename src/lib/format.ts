@@ -25,14 +25,20 @@ export function formatApiNetwork(network: string) {
   return API_NETWORK_LABELS[apiId] ?? apiId
 }
 
+/** Ghana / Accra — GMT year-round (no DST). */
+export const TIMEZONE_ACCRA = 'Africa/Accra'
+
 export function formatDate(value: string) {
-  return new Date(value).toLocaleString(undefined, {
-    month: 'short',
+  const formatted = new Date(value).toLocaleString('en-GB', {
+    timeZone: TIMEZONE_ACCRA,
     day: 'numeric',
+    month: 'short',
     year: 'numeric',
     hour: '2-digit',
     minute: '2-digit',
+    hour12: false,
   })
+  return `${formatted} GMT`
 }
 
 export function formatRelativeTime(value: string) {

@@ -180,3 +180,30 @@
 .animation-delay-2000 {
   animation-delay: 2s;
 }
+
+@keyframes live-delivery-shimmer {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(120%);
+  }
+}
+
+.live-delivery-shimmer {
+  background: linear-gradient(
+    105deg,
+    transparent 35%,
+    hsl(51 100% 50% / 0.18) 50%,
+    transparent 65%
+  );
+  animation: live-delivery-shimmer 3.8s ease-in-out infinite;
+}
+
+.scrollbar-none {
+  scrollbar-width: none;
+}
+
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}

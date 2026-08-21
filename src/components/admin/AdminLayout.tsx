@@ -1,6 +1,7 @@
 import {
   ArrowLeft,
   Bell,
+  Image,
   LayoutDashboard,
   LogOut,
   Menu,
@@ -10,6 +11,7 @@ import {
   Settings,
   ShieldCheck,
   ShoppingBag,
+  Ticket,
   Users,
   X,
   Zap,
@@ -18,7 +20,8 @@ import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useState } from 'react'
 import { useAuth } from '../../context/AuthContext'
 import { useAutoDeliverPoll } from '../../hooks/useAutoDeliverPoll'
-import { ADMIN_NAV_ITEMS, ADMIN_PAGE_TITLES } from '../../lib/adminConstants'
+import { ADMIN_NAV_GROUPS, ADMIN_PAGE_TITLES } from '../../lib/adminConstants'
+import { SidebarNavGroups } from '../SidebarNavGroups'
 import { AdminOrderTrackerFab } from './AdminOrderTrackerFab'
 
 const ICONS = {
@@ -30,8 +33,10 @@ const ICONS = {
   Bell,
   Settings,
   ShieldCheck,
+  Ticket,
   MessageCircle,
   Zap,
+  Image,
 }
 
 function AdminSidebar({
@@ -44,11 +49,6 @@ function AdminSidebar({
   onSignOut: () => void
 }) {
   const { pathname } = useLocation()
-
-  const isActive = (to: string) => {
-    if (to === '/admin') return pathname === '/admin'
-    return pathname.startsWith(to)
-  }
 
   return (
     <>
@@ -90,26 +90,16 @@ function AdminSidebar({
           </button>
         </div>
 
-        <nav className="flex-1 px-3 space-y-1 overflow-y-auto">
-          {ADMIN_NAV_ITEMS.map((item) => {
-            const Icon = ICONS[item.icon]
-            const active = isActive(item.to)
-            return (
-              <Link
-                key={item.to}
-                to={item.to}
-                onClick={onClose}
-                className={`flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors ${
-                  active
-                    ? 'bg-red-500/15 text-red-400 border border-red-500/20'
-                    : 'text-muted-foreground hover:bg-white/5 hover:text-foreground'
-                }`}
-              >
-                <Icon className="h-4 w-4 shrink-0" />
-                {item.label}
-              </Link>
-            )
-          })}
+        <nav className="flex-1 px-3 pb-2 overflow-y-auto">
+          <SidebarNavGroups
+            groups={ADMIN_NAV_GROUPS}
+            pathname={pathname}
+            rootPath="/admin"
+            icons={ICONS}
+            onNavigate={onClose}
+            activeClass="bg-red-500/15 text-red-400 border border-red-500/20"
+            idleClass="text-muted-foreground hover:bg-white/5 hover:text-foreground"
+          />
         </nav>
 
         <div className="p-4 border-t border-white/10 space-y-1">

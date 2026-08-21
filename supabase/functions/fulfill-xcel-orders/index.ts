@@ -115,7 +115,7 @@ async function fulfillOne(
   const billerChannel = (settings.xcel_biller_channel || 'FUNDGATE').trim()
 
   const merchantId =
-    (product?.xcel_merchant_id || '').trim() || defaultMerchant
+    (product?.xcel_merchant_id || '').trim() || defaultMerchant || apiKey
   const toAcct = (product?.xcel_to_acct || '').trim() || fromAcct
   const billerWallet = (product?.xcel_biller_wallet_num || '').trim()
   const providerCode = (product?.provider_code || order.network || '').trim()
@@ -133,6 +133,8 @@ async function fulfillOne(
         : order.service_type === 'ecg'
           ? 'electricity'
           : 'cable')) as string
+  const productId = billSubType || order.service_type
+  const resolvedUserId = userId || merchantId
 
   const face = Number(order.face_amount ?? order.amount)
   const amountStr = face.toFixed(2)
@@ -141,12 +143,12 @@ async function fulfillOne(
   const accountName =
     String(meta.account_name ?? product?.xcel_account_name ?? providerCode ?? 'Customer')
 
-  if (!userId || !fromAcct || !merchantId) {
+  if (!apiKey) {
     await supabase
       .from('orders')
       .update({
         provider_status: 'failed',
-        provider_error: 'Xcel credentials incomplete (user_id / from_acct / merchant_id)',
+        provider_error: 'Xcel API key missing (X-API-KEY)',
         status: 'failed',
         failure_reason: 'xcel_misconfigured',
       })
@@ -154,10 +156,10 @@ async function fulfillOne(
     return { id: order.id, success: false, error: 'misconfigured' }
   }
 
-  const authHeaders: Record<string, string> = {}
-  if (apiKey) {
-    authHeaders.Authorization = `Bearer ${apiKey}`
-    authHeaders['X-API-Key'] = apiKey
+  // Xcel partners API requires both headers (confirmed live).
+  const authHeaders: Record<string, string> = {
+    'X-API-KEY': apiKey,
+    'X-MERCHANT-ID': merchantId,
   }
 
   let dlCode = crypto.randomUUID()
@@ -167,13 +169,10 @@ async function fulfillOne(
 
   try {
     const dl = await requestDlCode(base, dlPath, authHeaders, {
-      merchant_id: merchantId,
-      utility: true,
-      from_acct: fromAcct,
-      user_id: userId,
       amount: amountStr,
-      to_bill_number: beneficiary,
-      description: `${order.service_type} ${providerCode} ${beneficiary}`,
+      receiver_account: fromAcct || merchantId,
+      utility: true,
+      merchant_id: merchantId,
     })
     if (dl.dl_code) dlCode = dl.dl_code
     if (dl.secret) secret = dl.secret
@@ -182,7 +181,22 @@ async function fulfillOne(
     /* fall back to local dl_code */
   }
 
+  // Live buy validation accepts this combined schema (docs samples alone are incomplete).
   const payload: Record<string, unknown> = {
+    country_code: 'GH',
+    currency: 'GHS',
+    operatorId: providerCode,
+    merchant: merchantId,
+    customer_id: beneficiary,
+    description: `${String(order.service_type).toUpperCase()} ${providerCode} for ${beneficiary}`,
+    amount: amountStr,
+    dl_code: dlCode,
+    product_id: productId,
+    type: xcelType,
+    user_id: resolvedUserId,
+    to_bill_number: beneficiary,
+    bill_sub_type: billSubType,
+    to_provider_code: providerCode,
     from_country: 'GH',
     to_country: 'GH',
     from_currency: 'GHS',
@@ -190,25 +204,18 @@ async function fulfillOne(
     channel: 'XCel',
     from_amount: amountStr,
     to_amount: amountStr,
-    dl_code: dlCode,
     secret,
-    type: xcelType,
-    bill_sub_type: billSubType,
-    to_provider_code: providerCode,
-    to_bill_number: beneficiary,
     account_name: accountName,
     bill_beneficiary_name: accountName,
     biller_channel: billerChannel,
     to_merchant_id: merchantId,
     merchant_id: merchantId,
     from_business: true,
-    from_acct: fromAcct,
-    to_acct: toAcct,
-    user_id: userId,
-    pin,
-    description: `${String(order.service_type).toUpperCase()} ${providerCode} for ${beneficiary}`,
   }
 
+  if (fromAcct) payload.from_acct = fromAcct
+  if (toAcct) payload.to_acct = toAcct
+  if (pin) payload.pin = pin
   if (billerWallet) payload.biller_wallet_num = billerWallet
   if (order.service_type === 'ecg') {
     payload.additional_bill_code = beneficiary
@@ -233,6 +240,12 @@ async function fulfillOne(
     const nextMeta = {
       ...meta,
       xcel_response: raw,
+      xcel_request: {
+        operatorId: providerCode,
+        product_id: productId,
+        merchant: merchantId,
+        amount: amountStr,
+      },
       ...(token ? { token } : {}),
     }
 

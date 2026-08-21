@@ -1,5 +1,7 @@
 import { Activity, ArrowRight, CheckCircle2, Key, Package, Send, Wallet } from 'lucide-react'
 import { Link } from 'react-router-dom'
+import { DashboardBannerCarousel } from '../../components/dashboard/DashboardBannerCarousel'
+import { LiveDeliveryStrip } from '../../components/dashboard/LiveDeliveryStrip'
 import { EmptyState, PageHeader, StatCard, StatusBadge } from '../../components/dashboard/ui'
 import { useAuth } from '../../context/AuthContext'
 import { MANUAL_TOPUP } from '../../lib/constants'
@@ -24,6 +26,10 @@ export default function OverviewPage() {
 
   return (
     <div className="space-y-6 md:space-y-8">
+      <LiveDeliveryStrip loading={ordersLoading} />
+
+      <DashboardBannerCarousel />
+
       <PageHeader
         title={`Welcome back${firstName ? `, ${firstName}` : ''} 👋`}
         description="Monitor your API balance, orders, and platform health — all purchases happen via API."

@@ -46,8 +46,20 @@ export default function SupportPage() {
     <div className="space-y-6 md:space-y-8">
       <PageHeader
         title="Support"
-        description="Contact our team on WhatsApp for order issues or complaints. Order statuses on your dashboard update automatically from the provider."
+        description="Open an in-app ticket for admin review, or contact the team on WhatsApp. Order statuses update automatically from the provider."
       />
+
+      <Panel title="In-app tickets">
+        <p className="text-sm text-muted-foreground mb-3">
+          Report issues to admin, track status, and receive written feedback when your ticket is handled.
+        </p>
+        <Link
+          to="/dashboard/tickets"
+          className="inline-flex items-center gap-2 h-10 px-4 rounded-lg bg-primary text-primary-foreground text-sm font-bold"
+        >
+          Open tickets →
+        </Link>
+      </Panel>
 
       <Panel title="Optional order reference">
         <p className="text-sm text-muted-foreground mb-3">

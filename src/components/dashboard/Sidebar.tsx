@@ -1,5 +1,6 @@
 import {
   Activity,
+  BarChart3,
   BookOpen,
   Key,
   LayoutDashboard,
@@ -13,19 +14,25 @@ import {
   Shield,
   ShieldCheck,
   ShoppingBag,
+  Ticket,
+  Users,
   Wallet,
   X,
   Zap,
 } from 'lucide-react'
 import { Link, useLocation } from 'react-router-dom'
-import { NAV_ITEMS } from '../../lib/constants'
+import { NAV_GROUPS } from '../../lib/constants'
 import { useAuth } from '../../context/AuthContext'
+import { SidebarNavGroups } from '../SidebarNavGroups'
 
 const ICONS = {
   LayoutDashboard,
   Wallet,
   Send,
   ShoppingBag,
+  Users,
+  BarChart3,
+  Ticket,
   RotateCcw,
   Package,
   Activity,
@@ -46,11 +53,6 @@ interface SidebarProps {
 export function Sidebar({ open, onClose, onSignOut }: SidebarProps) {
   const { pathname } = useLocation()
   const { user } = useAuth()
-
-  const isActive = (to: string) => {
-    if (to === '/dashboard') return pathname === '/dashboard'
-    return pathname.startsWith(to)
-  }
 
   return (
     <>
@@ -92,26 +94,16 @@ export function Sidebar({ open, onClose, onSignOut }: SidebarProps) {
           </button>
         </div>
 
-        <nav className="flex-1 px-3 space-y-1 overflow-y-auto">
-          {NAV_ITEMS.map((item) => {
-            const Icon = ICONS[item.icon]
-            const active = isActive(item.to)
-            return (
-              <Link
-                key={item.to}
-                to={item.to}
-                onClick={onClose}
-                className={`flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors ${
-                  active
-                    ? 'bg-primary/15 text-primary border border-primary/20'
-                    : 'text-muted-foreground hover:bg-white/5 hover:text-foreground'
-                }`}
-              >
-                <Icon className="h-4 w-4 shrink-0" />
-                {item.label}
-              </Link>
-            )
-          })}
+        <nav className="flex-1 px-3 pb-2 overflow-y-auto">
+          <SidebarNavGroups
+            groups={NAV_GROUPS}
+            pathname={pathname}
+            rootPath="/dashboard"
+            icons={ICONS}
+            onNavigate={onClose}
+            activeClass="bg-primary/15 text-primary border border-primary/20"
+            idleClass="text-muted-foreground hover:bg-white/5 hover:text-foreground"
+          />
         </nav>
 
         {user?.is_admin && (

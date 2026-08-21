@@ -69,6 +69,13 @@ export function StatusBadge({ status }: { status: string }) {
     waiting: 'bg-amber-500/15 text-amber-400 border-amber-500/30',
     refunded: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30',
     refund_requested: 'bg-blue-500/15 text-blue-400 border-blue-500/30',
+    open: 'bg-amber-500/15 text-amber-400 border-amber-500/30',
+    in_progress: 'bg-blue-500/15 text-blue-400 border-blue-500/30',
+    resolved: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30',
+    closed: 'bg-white/10 text-muted-foreground border-white/10',
+    low: 'bg-white/10 text-muted-foreground border-white/10',
+    normal: 'bg-blue-500/15 text-blue-400 border-blue-500/30',
+    high: 'bg-red-500/15 text-red-400 border-red-500/30',
   }
 
   return (
@@ -82,11 +89,13 @@ export function StatusBadge({ status }: { status: string }) {
   )
 }
 
-export function EmptyState({ title, description }: { title: string; description: string }) {
+export function EmptyState({ title, description }: { title: string; description?: string }) {
   return (
     <div className="py-12 text-center">
       <p className="font-semibold text-foreground/80">{title}</p>
-      <p className="text-sm text-muted-foreground mt-1 max-w-sm mx-auto">{description}</p>
+      {description && (
+        <p className="text-sm text-muted-foreground mt-1 max-w-sm mx-auto">{description}</p>
+      )}
     </div>
   )
 }

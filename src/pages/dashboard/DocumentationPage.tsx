@@ -4,6 +4,8 @@ import { PageHeader } from '../../components/dashboard/ui'
 import {
   DOC_ENDPOINTS,
   DOC_ERROR_CODES,
+  DOC_ORDER_STATUSES,
+  DOC_VERIFY_STATUSES,
   buildApiDocsText,
   downloadApiDocsPdf,
 } from '../../lib/apiDocumentation'
@@ -140,14 +142,27 @@ Content-Type: application/json`}
             available network + size_gb bundles
           </li>
           <li>
+            <code className="text-xs bg-secondary px-1 rounded">POST /v1/verify-number</code> — pre-check
+            MTN numbers (<code className="text-xs bg-secondary px-1 rounded">024/025/053/054/055</code>)
+          </li>
+          <li>
             <code className="text-xs bg-secondary px-1 rounded">POST /v1/buy-data</code> — purchase
-            data
+            data (then poll order status)
           </li>
           <li>
             <code className="text-xs bg-secondary px-1 rounded">GET /v1/orders/{'{reference}'}</code>{' '}
             — confirm delivery
           </li>
+          <li>
+            Optional:{' '}
+            <code className="text-xs bg-secondary px-1 rounded">GET /v1/utility-products</code> +{' '}
+            <code className="text-xs bg-secondary px-1 rounded">POST /v1/buy-airtime|/buy-ecg|/buy-tv</code>
+          </li>
         </ol>
+        <p className="text-sm text-muted-foreground">
+          Timestamps from the API are UTC. The dashboard shows times in <strong>Africa/Accra (GMT)</strong>.
+          Tickets, customers, and analytics are dashboard-only (not REST endpoints).
+        </p>
       </div>
 
       <div className="space-y-4">
@@ -210,14 +225,28 @@ Content-Type: application/json`}
 
       <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-5 md:p-6 space-y-3">
         <h2 className="font-display font-bold text-lg">Order Status Values</h2>
-        <div className="flex flex-wrap gap-2">
-          {['pending', 'processing', 'completed', 'failed'].map((status) => (
-            <span
-              key={status}
-              className="rounded-full border border-white/10 bg-secondary/50 px-3 py-1 text-xs font-mono capitalize"
-            >
-              {status}
-            </span>
+        <div className="space-y-2">
+          {DOC_ORDER_STATUSES.map((s) => (
+            <div key={s.status} className="flex gap-3 text-sm">
+              <span className="font-mono font-bold text-primary w-24 shrink-0">{s.status}</span>
+              <span className="text-muted-foreground">{s.meaning}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-5 md:p-6 space-y-3">
+        <h2 className="font-display font-bold text-lg">Verify Status Values</h2>
+        <p className="text-sm text-muted-foreground">
+          MTN verification only accepts prefixes{' '}
+          <code className="text-xs bg-secondary px-1 rounded">024, 025, 053, 054, 055</code>.
+        </p>
+        <div className="space-y-2">
+          {DOC_VERIFY_STATUSES.map((s) => (
+            <div key={s.status} className="flex gap-3 text-sm">
+              <span className="font-mono font-bold text-amber-400 w-24 shrink-0">{s.status}</span>
+              <span className="text-muted-foreground">{s.meaning}</span>
+            </div>
           ))}
         </div>
       </div>
@@ -230,6 +259,26 @@ Content-Type: application/json`}
           <pre className="text-xs font-mono bg-black/40 border border-white/10 rounded-xl p-4 overflow-x-auto text-muted-foreground">
 {`curl -X GET "${API_BASE_URL}/v1/balance" \\
   -H "Authorization: Bearer sk_live_your_api_key"`}
+          </pre>
+        </div>
+
+        <div>
+          <p className="text-sm font-medium mb-2">Verify MTN number</p>
+          <pre className="text-xs font-mono bg-black/40 border border-white/10 rounded-xl p-4 overflow-x-auto text-muted-foreground">
+{`curl -X POST "${API_BASE_URL}/v1/verify-number" \\
+  -H "Authorization: Bearer sk_live_your_api_key" \\
+  -H "Content-Type: application/json" \\
+  -d '{"phone":"0241234567"}'`}
+          </pre>
+        </div>
+
+        <div>
+          <p className="text-sm font-medium mb-2">Bulk verify MTN numbers</p>
+          <pre className="text-xs font-mono bg-black/40 border border-white/10 rounded-xl p-4 overflow-x-auto text-muted-foreground">
+{`curl -X POST "${API_BASE_URL}/v1/verify-number/bulk" \\
+  -H "Authorization: Bearer sk_live_your_api_key" \\
+  -H "Content-Type: application/json" \\
+  -d '{"phones":["0241234567","0559876543","0538122730"]}'`}
           </pre>
         </div>
 
@@ -257,6 +306,20 @@ Content-Type: application/json`}
     "phone": "0271234567",
     "network": "at_ishare",
     "size_gb": 2
+  }'`}
+          </pre>
+        </div>
+
+        <div>
+          <p className="text-sm font-medium mb-2">Buy MTN airtime</p>
+          <pre className="text-xs font-mono bg-black/40 border border-white/10 rounded-xl p-4 overflow-x-auto text-muted-foreground">
+{`curl -X POST "${API_BASE_URL}/v1/buy-airtime" \\
+  -H "Authorization: Bearer sk_live_your_api_key" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "phone": "0241234567",
+    "provider_code": "MTN",
+    "amount": 10
   }'`}
           </pre>
         </div>

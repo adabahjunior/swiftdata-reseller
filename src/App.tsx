@@ -26,9 +26,14 @@ import AdminUtilityProductsPage from './pages/admin/AdminUtilityProductsPage'
 import AdminUsersPage from './pages/admin/AdminUsersPage'
 import AdminUserDetailPage from './pages/admin/AdminUserDetailPage'
 import AdminNotificationsPage from './pages/admin/AdminNotificationsPage'
+import AdminBannersPage from './pages/admin/AdminBannersPage'
 import SupportPage from './pages/dashboard/SupportPage'
+import TicketsPage from './pages/dashboard/TicketsPage'
+import CustomersPage from './pages/dashboard/CustomersPage'
+import AnalyticsPage from './pages/dashboard/AnalyticsPage'
 import AdminSiteSettingsPage from './pages/admin/AdminSiteSettingsPage'
 import AdminSupportPage from './pages/admin/AdminSupportPage'
+import AdminTicketsPage from './pages/admin/AdminTicketsPage'
 
 export default function App() {
   return (
@@ -45,6 +50,9 @@ export default function App() {
               <Route path="utilities" element={<UtilitiesOrderPage />} />
               <Route path="verify-numbers" element={<VerifyNumbersPage />} />
               <Route path="orders" element={<OrdersPage />} />
+              <Route path="customers" element={<CustomersPage />} />
+              <Route path="analytics" element={<AnalyticsPage />} />
+              <Route path="tickets" element={<TicketsPage />} />
               <Route path="refunds" element={<RefundsPage />} />
               <Route path="packages" element={<DataPackagesPage />} />
               <Route path="health" element={<ApiHealthPage />} />
@@ -60,6 +68,8 @@ export default function App() {
               <Route path="orders" element={<AdminOrdersPage />} />
               <Route path="refunds" element={<AdminRefundsPage />} />
               <Route path="verifications" element={<AdminNumberVerificationsPage />} />
+              <Route path="tickets" element={<AdminTicketsPage />} />
+              <Route path="banners" element={<AdminBannersPage />} />
               <Route path="packages" element={<AdminPackagesPage />} />
               <Route path="utilities" element={<AdminUtilityProductsPage />} />
               <Route path="users" element={<AdminUsersPage />} />

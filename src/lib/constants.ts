@@ -73,18 +73,52 @@ export const ORDER_STATUS_STYLES: Record<string, string> = {
   failed: 'bg-red-500/15 text-red-400 border-red-500/30',
 }
 
-export const NAV_ITEMS = [
-  { label: 'Overview', to: '/dashboard', icon: 'LayoutDashboard' },
-  { label: 'My API Balance', to: '/dashboard/balance', icon: 'Wallet' },
-  { label: 'Place Order', to: '/dashboard/place-order', icon: 'Send' },
-  { label: 'Utilities', to: '/dashboard/utilities', icon: 'Zap' },
-  { label: 'Verify Numbers', to: '/dashboard/verify-numbers', icon: 'ShieldCheck' },
-  { label: 'All Orders', to: '/dashboard/orders', icon: 'ShoppingBag' },
-  { label: 'Refunds', to: '/dashboard/refunds', icon: 'RotateCcw' },
-  { label: 'Data Packages', to: '/dashboard/packages', icon: 'Package' },
-  { label: 'API Health', to: '/dashboard/health', icon: 'Activity' },
-  { label: 'My API', to: '/dashboard/api', icon: 'Key' },
-  { label: 'Documentation', to: '/dashboard/docs', icon: 'BookOpen' },
-  { label: 'Support', to: '/dashboard/support', icon: 'MessageCircle' },
-  { label: 'Settings', to: '/dashboard/settings', icon: 'Settings' },
+export const NAV_GROUPS = [
+  {
+    id: 'main',
+    label: 'Main',
+    items: [{ label: 'Overview', to: '/dashboard', icon: 'LayoutDashboard' }],
+  },
+  {
+    id: 'orders',
+    label: 'Orders',
+    items: [
+      { label: 'Place Order', to: '/dashboard/place-order', icon: 'Send' },
+      { label: 'Utilities', to: '/dashboard/utilities', icon: 'Zap' },
+      { label: 'Submit Numbers', to: '/dashboard/verify-numbers', icon: 'ShieldCheck' },
+      { label: 'All Orders', to: '/dashboard/orders', icon: 'ShoppingBag' },
+      { label: 'Refunds', to: '/dashboard/refunds', icon: 'RotateCcw' },
+      { label: 'Data Packages', to: '/dashboard/packages', icon: 'Package' },
+    ],
+  },
+  {
+    id: 'insights',
+    label: 'Insights',
+    items: [
+      { label: 'Customers', to: '/dashboard/customers', icon: 'Users' },
+      { label: 'Analytics', to: '/dashboard/analytics', icon: 'BarChart3' },
+    ],
+  },
+  {
+    id: 'api',
+    label: 'API & Wallet',
+    items: [
+      { label: 'My API Balance', to: '/dashboard/balance', icon: 'Wallet' },
+      { label: 'My API', to: '/dashboard/api', icon: 'Key' },
+      { label: 'API Health', to: '/dashboard/health', icon: 'Activity' },
+      { label: 'Documentation', to: '/dashboard/docs', icon: 'BookOpen' },
+    ],
+  },
+  {
+    id: 'support',
+    label: 'Support',
+    items: [
+      { label: 'Tickets', to: '/dashboard/tickets', icon: 'Ticket' },
+      { label: 'WhatsApp', to: '/dashboard/support', icon: 'MessageCircle' },
+      { label: 'Settings', to: '/dashboard/settings', icon: 'Settings' },
+    ],
+  },
 ] as const
+
+/** Flat list kept for any callers that still map all routes */
+export const NAV_ITEMS = NAV_GROUPS.flatMap((g) => g.items)

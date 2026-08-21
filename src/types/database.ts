@@ -152,6 +152,54 @@ export interface NumberVerification {
   updated_at: string
 }
 
+export interface DashboardBanner {
+  id: string
+  title: string | null
+  image_path: string
+  link_url: string | null
+  sort_order: number
+  is_active: boolean
+  created_by: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface SupportTicket {
+  id: string
+  user_id: string
+  order_reference: string | null
+  subject: string
+  body: string
+  status: 'open' | 'in_progress' | 'resolved' | 'closed'
+  priority: 'low' | 'normal' | 'high'
+  admin_feedback: string | null
+  resolved_at: string | null
+  resolved_by: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface SupportTicketMessage {
+  id: string
+  ticket_id: string
+  author_id: string
+  body: string
+  is_admin_reply: boolean
+  created_at: string
+}
+
+export interface AgentCustomer {
+  phone: string
+  order_count: number
+  total_spent: number
+  first_order_at: string
+  last_order_at: string
+  completed_count: number
+  failed_count: number
+  top_network: string | null
+  is_returning: boolean
+}
+
 export interface Database {
   public: {
     Tables: {

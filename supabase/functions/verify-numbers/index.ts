@@ -10,7 +10,7 @@ const corsHeaders = {
 const DATAMART_BASE = 'https://api.datamartgh.shop/api/developer'
 const DATAHUB_BASE = 'https://user.datahubgh.com/api/external'
 /** MTN Ghana prefixes used by Datahub / DataMart verify. */
-const MTN_PREFIX_RE = /^0(24|25|53|54|55|59)\d{7}$/
+const MTN_PREFIX_RE = /^0(24|25|53|54|55)\d{7}$/
 const PHONE_RE = /^0[2-5]\d{8}$/
 
 type ProviderSlug = 'primary' | 'secondary' | 'tertiary'
@@ -209,7 +209,7 @@ function interpretDatahub(
   if (!isMtn(phone)) {
     return invalidResult(
       phone,
-      'Only MTN numbers can be verified (024, 025, 053, 054, 055, 059)',
+      'Only MTN numbers can be verified (024, 025, 053, 054, 055)',
       provider.name,
     )
   }
@@ -300,7 +300,7 @@ function interpretDatamartSingle(
   if (!isMtn(phone)) {
     return invalidResult(
       phone,
-      'Only MTN numbers can be verified (024, 025, 053, 054, 055, 059)',
+      'Only MTN numbers can be verified (024, 025, 053, 054, 055)',
       provider.name,
     )
   }
@@ -405,7 +405,7 @@ function interpretDatamartBulkItem(
     return invalidResult(phone || raw, String(item?.reason ?? 'invalid_number'), provider.name)
   }
   if (!isMtn(phone)) {
-    return invalidResult(phone, 'Only MTN numbers can be verified (024, 025, 053, 054, 055, 059)', provider.name)
+    return invalidResult(phone, 'Only MTN numbers can be verified (024, 025, 053, 054, 055)', provider.name)
   }
 
   if (!item || item.normalized === null) {
@@ -578,6 +578,39 @@ async function applyVerificationWebhook(
   return { handled: true, phone, exists, updated: rows?.length ?? 0 }
 }
 
+/** Push a Datahub check result onto matching DB rows (by phone, optionally scoped to one user). */
+async function applyCheckToPhoneRows(
+  supabase: ReturnType<typeof createClient>,
+  check: CheckResult,
+  scopeUserId: string | null,
+) {
+  if (!check.valid || check.status === 'invalid' || check.status === 'error') {
+    return { phone: check.phone, updated: 0 }
+  }
+
+  const now = new Date().toISOString()
+  const patch: Record<string, unknown> = {
+    provider_exists: check.provider_exists,
+    provider_message: check.message,
+    provider_name: check.provider_name,
+    checked_at: now,
+    updated_at: now,
+  }
+
+  if (check.verified) {
+    patch.status = 'verified'
+    patch.resolved_at = now
+  } else if (check.status === 'submitted' || check.submitted_to_provider) {
+    patch.status = 'submitted'
+  }
+
+  let query = supabase.from('number_verifications').update(patch).eq('phone', check.phone)
+  if (scopeUserId) query = query.eq('user_id', scopeUserId)
+
+  const { data } = await query.select('id')
+  return { phone: check.phone, updated: data?.length ?? 0, status: patch.status ?? null }
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
@@ -663,7 +696,7 @@ Deno.serve(async (req) => {
           results.push(invalidResult(phone, 'Invalid Ghana phone. Use format 0241234567', providerName))
         } else if (!isMtn(phone)) {
           results.push(
-            invalidResult(phone, 'Only MTN numbers can be verified (024, 025, 053, 054, 055, 059)', providerName),
+            invalidResult(phone, 'Only MTN numbers can be verified (024, 025, 053, 054, 055)', providerName),
           )
         } else {
           toCheck.push(phone)
@@ -767,6 +800,80 @@ Deno.serve(async (req) => {
       })
     }
 
+    if (req.method === 'POST' && path === '/sync') {
+      const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null
+      if (!token || token === anonKey || token === serviceKey || !userId) {
+        return json({ success: false, error: 'Login required' }, 401)
+      }
+      if (!datahub?.apiKey && !datamart?.apiKey) {
+        return json({ success: false, error: 'No verification provider configured' }, 503)
+      }
+
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('is_admin')
+        .eq('id', userId)
+        .maybeSingle()
+      const isAdmin = Boolean(profile?.is_admin)
+
+      const body = await req.json().catch(() => ({}))
+      let phones: string[] = Array.isArray(body.phones)
+        ? body.phones.map((p: unknown) => normalizePhone(String(p))).filter(Boolean)
+        : []
+
+      if (phones.length === 0) {
+        let openQuery = supabase
+          .from('number_verifications')
+          .select('phone')
+          .in('status', ['pending', 'submitted', 'unverified'])
+          .order('updated_at', { ascending: false })
+          .limit(100)
+        if (!isAdmin) openQuery = openQuery.eq('user_id', userId)
+        const { data: openRows } = await openQuery
+        phones = [...new Set((openRows ?? []).map((r) => normalizePhone(String(r.phone))).filter(isMtn))]
+      } else {
+        phones = [...new Set(phones.filter(isMtn))].slice(0, 100)
+      }
+
+      if (phones.length === 0) {
+        return json({ success: true, synced: 0, verified: 0, results: [] })
+      }
+
+      const scopeUserId = isAdmin ? null : userId
+      const results: CheckResult[] = []
+      const updates = []
+
+      if (datahub?.apiKey) {
+        const checked = await mapPool(phones, 5, async (phone) => {
+          const upstream = await datahubVerifySingle(datahub.apiKey, phone, false)
+          return interpretDatahub(phone, datahub, upstream)
+        })
+        for (const item of checked) {
+          results.push(item)
+          updates.push(await applyCheckToPhoneRows(supabase, item, scopeUserId))
+          if (!isAdmin) await upsertCheck(supabase, userId, item)
+        }
+      } else if (datamart?.apiKey) {
+        for (const phone of phones) {
+          const upstream = await datamartVerifySingle(datamart.apiKey, phone)
+          const item = interpretDatamartSingle(phone, datamart, upstream)
+          results.push(item)
+          updates.push(await applyCheckToPhoneRows(supabase, item, scopeUserId))
+          if (!isAdmin) await upsertCheck(supabase, userId, item)
+        }
+      }
+
+      return json({
+        success: true,
+        provider: datahub ? 'datahub' : 'datamart',
+        synced: phones.length,
+        verified: results.filter((r) => r.verified).length,
+        updated_rows: updates.reduce((n, u) => n + (u.updated || 0), 0),
+        results,
+        updates,
+      })
+    }
+
     if (req.method === 'POST' && path === '/request') {
       const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null
       if (!token || token === anonKey || token === serviceKey || !userId) {
@@ -797,7 +904,7 @@ Deno.serve(async (req) => {
           results.push({
             phone,
             success: false,
-            error: 'Only MTN numbers can be submitted (024, 025, 053, 054, 055, 059)',
+            error: 'Only MTN numbers can be submitted (024, 025, 053, 054, 055)',
           })
           continue
         }
@@ -860,6 +967,7 @@ Deno.serve(async (req) => {
       endpoints: {
         'POST /check': 'Verify MTN numbers via Datahub (falls back to DataMart)',
         'POST /bulk': 'Bulk verify up to 100 MTN numbers',
+        'POST /sync': 'Re-check open numbers against Datahub and update live statuses',
         'POST /request': 'Submit unverified numbers to Datahub /purchases/submit-numbers (auth required)',
         'POST /webhook': 'Receive Datahub number-verification callbacks if sent',
         'GET /health': 'Check Datahub (or DataMart) verify-number connectivity',
