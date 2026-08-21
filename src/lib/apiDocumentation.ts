@@ -63,7 +63,7 @@ export const DOC_ENDPOINTS: DocEndpoint[] = [
     path: '/v1/buy-data',
     title: 'Buy Data',
     description:
-      'Purchase a data bundle for a Ghana phone number. Deducts from your API balance instantly, then forwards the order to the active fulfillment provider. Status may start as pending/processing — poll GET /v1/orders/{reference} until completed or failed. Prefer verifying MTN numbers first with /v1/verify-number.',
+      'Purchase a data bundle for a Ghana phone number. Deducts from your API balance instantly, then forwards the order to the active fulfillment provider. Status may start as pending/processing — poll GET /v1/orders/{reference} until completed or failed. Prefer verifying MTN numbers first with /v1/verify-number; submit unverified ones with /v1/submit-numbers.',
     body: `{
   "phone": "0241234567",
   "network": "yello",
@@ -195,7 +195,7 @@ export const DOC_ENDPOINTS: DocEndpoint[] = [
     path: '/v1/verify-number',
     title: 'Verify MTN Number',
     description:
-      'Pre-check one MTN beneficiary via Datahub before selling data. Allowed prefixes: 024, 025, 053, 054, 055. Returns servable + recommendation (sell_any | activate_first). Unverified numbers are submitted for beneficiary approval automatically when the provider supports it. Also accepts phones[] / numbers[] (same as bulk when more than one).',
+      'Pre-check one MTN beneficiary before selling data. Allowed prefixes: 024, 025, 053, 054, 055. Returns servable + recommendation (sell_any | activate_first). Also accepts phones[] / numbers[] (same as bulk when more than one). Use POST /v1/submit-numbers to queue unverified numbers for beneficiary approval.',
     body: `{
   "phone": "0241234567"
 }`,
@@ -225,7 +225,7 @@ export const DOC_ENDPOINTS: DocEndpoint[] = [
     path: '/v1/verify-number/bulk',
     title: 'Verify MTN Numbers (Bulk)',
     description:
-      'Pre-check up to 100 MTN numbers via Datahub. Non-MTN numbers are rejected locally. Body accepts phones[], numbers[], or a single phone. Same result shape as /v1/verify-number.',
+      'Pre-check up to 100 MTN numbers. Non-MTN numbers are rejected locally. Body accepts phones[], numbers[], or a single phone. Same result shape as /v1/verify-number.',
     body: `{
   "phones": ["0241234567", "0559876543", "0271112233"]
 }`,
@@ -257,6 +257,41 @@ export const DOC_ENDPOINTS: DocEndpoint[] = [
       "status": "invalid",
       "message": "Only MTN numbers can be verified (024, 025, 053, 054, 055)"
     }
+  ]
+}`,
+  },
+  {
+    method: 'POST',
+    path: '/v1/submit-numbers',
+    title: 'Submit MTN Numbers for Approval',
+    description:
+      'Check MTN numbers, then submit any unverified ones for beneficiary approval (same flow as Submit Numbers in the dashboard). Allowed prefixes: 024, 025, 053, 054, 055. Already-verified numbers are skipped. Optional note is stored on your verification queue. Set skip_check: true to submit without a fresh provider check. Alias: POST /v1/verify-number/submit.',
+    body: `{
+  "phones": ["0559876543", "0538122730"],
+  "note": "Agent batch — Accra"
+}`,
+    response: `{
+  "success": true,
+  "checked": 2,
+  "verified": 0,
+  "unverified": 2,
+  "submitted": 2,
+  "skipped_already_verified": 0,
+  "note": "Agent batch — Accra",
+  "check": {
+    "activate_first": 2,
+    "results": [
+      {
+        "phone": "0559876543",
+        "verified": false,
+        "recommendation": "activate_first",
+        "status": "unverified"
+      }
+    ]
+  },
+  "results": [
+    { "success": true, "phone": "0559876543" },
+    { "success": true, "phone": "0538122730" }
   ]
 }`,
   },
@@ -394,7 +429,7 @@ dashboard orders show "mtn".
 
 MTN number verification prefixes
 --------------------------------
-Only these local prefixes are accepted by /v1/verify-number:
+Only these local prefixes are accepted by /v1/verify-number and /v1/submit-numbers:
   024, 025, 053, 054, 055
 
 Timestamps
@@ -414,9 +449,10 @@ Quick Start
 2. Generate an API key from My API
 3. GET /v1/packages — list available network + size_gb bundles
 4. POST /v1/verify-number — pre-check MTN numbers (024/025/053/054/055)
-5. POST /v1/buy-data — purchase data
-6. GET /v1/orders/{reference} — confirm delivery
-7. GET /v1/utility-products + POST /v1/buy-airtime|/buy-ecg|/buy-tv — utilities
+5. POST /v1/submit-numbers — queue unverified MTN numbers for approval
+6. POST /v1/buy-data — purchase data
+7. GET /v1/orders/{reference} — confirm delivery
+8. GET /v1/utility-products + POST /v1/buy-airtime|/buy-ecg|/buy-tv — utilities
 
 Dashboard (non-API)
 -------------------
@@ -480,6 +516,12 @@ Bulk verify MTN numbers:
     -H "Authorization: Bearer sk_live_your_api_key" \\
     -H "Content-Type: application/json" \\
     -d '{"phones":["0241234567","0559876543","0538122730"]}'
+
+Submit MTN numbers for approval:
+  curl -X POST "${API_BASE_URL}/v1/submit-numbers" \\
+    -H "Authorization: Bearer sk_live_your_api_key" \\
+    -H "Content-Type: application/json" \\
+    -d '{"phones":["0559876543","0538122730"],"note":"API batch"}'
 
 Buy MTN airtime:
   curl -X POST "${API_BASE_URL}/v1/buy-airtime" \\

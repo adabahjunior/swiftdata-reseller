@@ -611,6 +611,50 @@ async function applyCheckToPhoneRows(
   return { phone: check.phone, updated: data?.length ?? 0, status: patch.status ?? null }
 }
 
+async function queueNumberVerification(
+  supabase: ReturnType<typeof createClient>,
+  userId: string,
+  phone: string,
+  note: string | null,
+) {
+  const { data: existing } = await supabase
+    .from('number_verifications')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('phone', phone)
+    .maybeSingle()
+
+  if (existing?.status === 'verified') {
+    return { success: true, phone, already_verified: true, record: existing }
+  }
+  if (existing && (existing.status === 'pending' || existing.status === 'submitted')) {
+    return { success: true, phone, already_requested: true, record: existing }
+  }
+
+  const payload = {
+    user_id: userId,
+    phone,
+    network: 'mtn',
+    status: 'pending',
+    note: note?.trim() || null,
+    requested_at: new Date().toISOString(),
+    resolved_at: null,
+    resolved_by: null,
+    updated_at: new Date().toISOString(),
+  }
+
+  const { data, error } = await supabase
+    .from('number_verifications')
+    .upsert(payload, { onConflict: 'user_id,phone' })
+    .select('*')
+    .maybeSingle()
+
+  if (error) {
+    return { success: false, phone, error: error.message }
+  }
+  return { success: true, phone, record: data }
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
@@ -664,6 +708,11 @@ Deno.serve(async (req) => {
       }
 
       const body = await req.json().catch(() => ({}))
+      const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null
+      // Public API (service role) may attribute checks to the API-key owner
+      if (token === serviceKey && body.user_id && typeof body.user_id === 'string') {
+        userId = body.user_id
+      }
       const isPorted = Boolean(body.is_ported_number ?? body.isPorted)
       const rawPhones: string[] = Array.isArray(body.phones)
         ? body.phones.map(String)
@@ -876,15 +925,18 @@ Deno.serve(async (req) => {
 
     if (req.method === 'POST' && path === '/request') {
       const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null
-      if (!token || token === anonKey || token === serviceKey || !userId) {
+      const body = await req.json().catch(() => ({}))
+      const isServiceCall = token === serviceKey
+
+      if (isServiceCall) {
+        if (!body.user_id || typeof body.user_id !== 'string') {
+          return json({ success: false, error: 'user_id required for service submit' }, 400)
+        }
+        userId = body.user_id
+      } else if (!token || token === anonKey || !userId) {
         return json({ success: false, error: 'Login required to request verification' }, 401)
       }
 
-      const userClient = createClient(supabaseUrl, anonKey, {
-        global: { headers: { Authorization: `Bearer ${token}` } },
-      })
-
-      const body = await req.json().catch(() => ({}))
       const phones: string[] = Array.isArray(body.phones)
         ? body.phones.map(String)
         : body.phone
@@ -894,6 +946,9 @@ Deno.serve(async (req) => {
 
       if (phones.length === 0) {
         return json({ success: false, error: 'phone or phones[] required' }, 400)
+      }
+      if (phones.length > 100) {
+        return json({ success: false, error: 'Maximum 100 numbers per request' }, 400)
       }
 
       const results = []
@@ -908,13 +963,29 @@ Deno.serve(async (req) => {
           })
           continue
         }
-        const { data, error } = await userClient.rpc('request_number_verification', {
-          p_user_id: userId,
-          p_phone: phone,
-          p_note: note,
-        })
-        if (!error) toSubmit.push(phone)
-        results.push(error ? { phone, success: false, error: error.message } : data)
+
+        if (isServiceCall) {
+          const queued = await queueNumberVerification(supabase, userId!, phone, note)
+          if (queued.success && !queued.already_verified) toSubmit.push(phone)
+          results.push(queued)
+        } else {
+          const userClient = createClient(supabaseUrl, anonKey, {
+            global: { headers: { Authorization: `Bearer ${token}` } },
+          })
+          const { data, error } = await userClient.rpc('request_number_verification', {
+            p_user_id: userId,
+            p_phone: phone,
+            p_note: note,
+          })
+          const ok =
+            !error &&
+            data &&
+            typeof data === 'object' &&
+            (data as Record<string, unknown>).success !== false &&
+            !(data as Record<string, unknown>).already_verified
+          if (ok) toSubmit.push(phone)
+          results.push(error ? { phone, success: false, error: error.message } : data)
+        }
       }
 
       let datahubSubmit: unknown = null
@@ -933,7 +1004,13 @@ Deno.serve(async (req) => {
           .in('status', ['pending', 'unverified', 'submitted'])
       }
 
-      return json({ success: true, provider: datahub ? 'datahub' : 'local', results, datahub_submit: datahubSubmit })
+      return json({
+        success: true,
+        provider: datahub ? 'datahub' : 'local',
+        submitted: toSubmit.length,
+        results,
+        datahub_submit: datahubSubmit,
+      })
     }
 
     if (req.method === 'GET' && path === '/health') {
@@ -968,7 +1045,7 @@ Deno.serve(async (req) => {
         'POST /check': 'Verify MTN numbers via Datahub (falls back to DataMart)',
         'POST /bulk': 'Bulk verify up to 100 MTN numbers',
         'POST /sync': 'Re-check open numbers against Datahub and update live statuses',
-        'POST /request': 'Submit unverified numbers to Datahub /purchases/submit-numbers (auth required)',
+        'POST /request': 'Submit unverified numbers to Datahub /purchases/submit-numbers (user JWT or service + user_id)',
         'POST /webhook': 'Receive Datahub number-verification callbacks if sent',
         'GET /health': 'Check Datahub (or DataMart) verify-number connectivity',
       },

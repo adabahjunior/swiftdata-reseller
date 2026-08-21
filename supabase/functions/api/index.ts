@@ -120,6 +120,24 @@ function error(message: string, status = 400) {
   return json({ success: false, error: message }, status)
 }
 
+function parseApiPhones(body: Record<string, unknown>): string[] {
+  if (Array.isArray(body.phones)) return body.phones.map(String)
+  if (Array.isArray(body.numbers)) {
+    return body.numbers.map((n: unknown) =>
+      typeof n === 'string'
+        ? n
+        : String(
+            (n as Record<string, unknown>)?.number ??
+              (n as Record<string, unknown>)?._beneficiary_number ??
+              '',
+          ),
+    )
+  }
+  if (body.phone) return [String(body.phone)]
+  if (body.phoneNumber) return [String(body.phoneNumber)]
+  return []
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
@@ -347,24 +365,8 @@ Deno.serve(async (req) => {
       (path === '/v1/verify-number' || path === '/v1/verify-number/bulk') &&
       req.method === 'POST'
     ) {
-      const body = await req.json().catch(() => ({}))
-      const phones: string[] = Array.isArray(body.phones)
-        ? body.phones.map(String)
-        : Array.isArray(body.numbers)
-          ? body.numbers.map((n: unknown) =>
-              typeof n === 'string'
-                ? n
-                : String(
-                    (n as Record<string, unknown>)?.number ??
-                      (n as Record<string, unknown>)?._beneficiary_number ??
-                      '',
-                  ),
-            )
-          : body.phone
-            ? [String(body.phone)]
-            : body.phoneNumber
-              ? [String(body.phoneNumber)]
-              : []
+      const body = (await req.json().catch(() => ({}))) as Record<string, unknown>
+      const phones = parseApiPhones(body)
 
       const max = 100
       if (phones.length === 0) {
@@ -389,7 +391,7 @@ Deno.serve(async (req) => {
                 Authorization: `Bearer ${key}`,
                 'Content-Type': 'application/json',
               },
-              body: JSON.stringify({ phones }),
+              body: JSON.stringify({ phones, user_id: userId }),
             },
           )
           const verifyBody = await verifyRes.json().catch(() => ({}))
@@ -408,6 +410,130 @@ Deno.serve(async (req) => {
               activate_first: verifyBody.activate_first,
               summary: verifyBody.summary,
               results: verifyBody.results,
+            }
+          }
+        }
+      }
+    } else if (
+      (path === '/v1/submit-numbers' || path === '/v1/verify-number/submit') &&
+      req.method === 'POST'
+    ) {
+      const body = (await req.json().catch(() => ({}))) as Record<string, unknown>
+      const phones = parseApiPhones(body)
+      const note = body.note != null ? String(body.note) : undefined
+      const skipCheck = body.skip_check === true || body.skipCheck === true
+
+      const max = 100
+      if (phones.length === 0) {
+        statusCode = 400
+        responseBody = { success: false, error: 'phone, phones[], or numbers[] is required' }
+      } else if (phones.length > max) {
+        statusCode = 400
+        responseBody = { success: false, error: 'Maximum 100 numbers per request' }
+      } else {
+        const base = Deno.env.get('SUPABASE_URL')
+        const key = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
+        if (!base || !key) {
+          statusCode = 500
+          responseBody = { success: false, error: 'Server misconfigured' }
+        } else {
+          let checkBody: Record<string, unknown> | null = null
+          let toSubmit = phones
+          let failed = false
+
+          if (!skipCheck) {
+            const useBulk = phones.length > 1
+            const verifyRes = await fetch(
+              `${base}/functions/v1/verify-numbers/${useBulk ? 'bulk' : 'check'}`,
+              {
+                method: 'POST',
+                headers: {
+                  Authorization: `Bearer ${key}`,
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ phones, user_id: userId }),
+              },
+            )
+            checkBody = (await verifyRes.json().catch(() => ({}))) as Record<string, unknown>
+            if (!verifyRes.ok || !checkBody?.success) {
+              statusCode = verifyRes.status >= 400 ? verifyRes.status : 502
+              responseBody = checkBody?.error
+                ? checkBody
+                : { success: false, error: 'Provider verification failed' }
+              failed = true
+            } else {
+              const results = Array.isArray(checkBody.results)
+                ? (checkBody.results as Record<string, unknown>[])
+                : []
+              toSubmit = results
+                .filter((r) => {
+                  const status = String(r.status ?? '')
+                  return (
+                    r.valid !== false &&
+                    !r.verified &&
+                    status !== 'invalid' &&
+                    status !== 'error' &&
+                    (r.recommendation === 'activate_first' ||
+                      status === 'unverified' ||
+                      status === 'submitted' ||
+                      status === 'pending')
+                  )
+                })
+                .map((r) => String(r.phone))
+            }
+          }
+
+          if (!failed) {
+            let submitBody: Record<string, unknown> = {
+              success: true,
+              submitted: 0,
+              results: [],
+              datahub_submit: null,
+            }
+
+            if (toSubmit.length > 0) {
+              const submitRes = await fetch(`${base}/functions/v1/verify-numbers/request`, {
+                method: 'POST',
+                headers: {
+                  Authorization: `Bearer ${key}`,
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ phones: toSubmit, user_id: userId, note }),
+              })
+              submitBody = (await submitRes.json().catch(() => ({}))) as Record<string, unknown>
+              if (!submitRes.ok || submitBody?.success === false) {
+                statusCode = submitRes.status >= 400 ? submitRes.status : 502
+                responseBody = submitBody?.error
+                  ? submitBody
+                  : { success: false, error: 'Number submit failed' }
+                failed = true
+              }
+            }
+
+            if (!failed) {
+              const alreadyVerified = Array.isArray(checkBody?.results)
+                ? (checkBody!.results as Record<string, unknown>[]).filter((r) => r.verified)
+                    .length
+                : 0
+              responseBody = {
+                success: true,
+                checked: checkBody?.checked ?? phones.length,
+                verified: checkBody?.verified ?? alreadyVerified,
+                unverified: checkBody?.unverified ?? null,
+                submitted: submitBody.submitted ?? toSubmit.length,
+                skipped_already_verified: alreadyVerified,
+                note: note ?? null,
+                check: checkBody
+                  ? {
+                      sell_any: checkBody.sell_any,
+                      activate_first: checkBody.activate_first,
+                      results: checkBody.results,
+                      summary: checkBody.summary,
+                    }
+                  : null,
+                results: submitBody.results ?? [],
+                datahub_submit: submitBody.datahub_submit ?? null,
+              }
             }
           }
         }

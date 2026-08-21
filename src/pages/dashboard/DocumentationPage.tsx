@@ -146,6 +146,10 @@ Content-Type: application/json`}
             MTN numbers (<code className="text-xs bg-secondary px-1 rounded">024/025/053/054/055</code>)
           </li>
           <li>
+            <code className="text-xs bg-secondary px-1 rounded">POST /v1/submit-numbers</code> — submit
+            unverified MTN numbers for beneficiary approval (same as dashboard Submit Numbers)
+          </li>
+          <li>
             <code className="text-xs bg-secondary px-1 rounded">POST /v1/buy-data</code> — purchase
             data (then poll order status)
           </li>
@@ -279,6 +283,16 @@ Content-Type: application/json`}
   -H "Authorization: Bearer sk_live_your_api_key" \\
   -H "Content-Type: application/json" \\
   -d '{"phones":["0241234567","0559876543","0538122730"]}'`}
+          </pre>
+        </div>
+
+        <div>
+          <p className="text-sm font-medium mb-2">Submit MTN numbers for approval</p>
+          <pre className="text-xs font-mono bg-black/40 border border-white/10 rounded-xl p-4 overflow-x-auto text-muted-foreground">
+{`curl -X POST "${API_BASE_URL}/v1/submit-numbers" \\
+  -H "Authorization: Bearer sk_live_your_api_key" \\
+  -H "Content-Type: application/json" \\
+  -d '{"phones":["0559876543","0538122730"],"note":"API batch"}'`}
           </pre>
         </div>
 
