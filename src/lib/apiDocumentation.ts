@@ -195,7 +195,7 @@ export const DOC_ENDPOINTS: DocEndpoint[] = [
     path: '/v1/verify-number',
     title: 'Verify MTN Number',
     description:
-      'Pre-check one MTN beneficiary before selling data. Allowed prefixes: 024, 025, 053, 054, 055. Returns servable + recommendation (sell_any | activate_first). Also accepts phones[] / numbers[] (same as bulk when more than one). Use POST /v1/submit-numbers to queue unverified numbers for beneficiary approval.',
+      'Pre-check one MTN beneficiary before selling data. Allowed prefixes: 024, 025, 053, 054, 055, 059. Returns servable + recommendation (sell_any | activate_first). Also accepts phones[] / numbers[] (same as bulk when more than one). Use POST /v1/submit-numbers to queue unverified numbers for beneficiary approval.',
     body: `{
   "phone": "0241234567"
 }`,
@@ -255,7 +255,7 @@ export const DOC_ENDPOINTS: DocEndpoint[] = [
       "phone": "0271112233",
       "valid": false,
       "status": "invalid",
-      "message": "Only MTN numbers can be verified (024, 025, 053, 054, 055)"
+      "message": "Only MTN numbers can be verified (024, 025, 053, 054, 055, 059)"
     }
   ]
 }`,
@@ -265,7 +265,7 @@ export const DOC_ENDPOINTS: DocEndpoint[] = [
     path: '/v1/submit-numbers',
     title: 'Submit MTN Numbers for Approval',
     description:
-      'Check MTN numbers, then submit any unverified ones for beneficiary approval (same flow as Submit Numbers in the dashboard). Allowed prefixes: 024, 025, 053, 054, 055. Already-verified numbers are skipped. Optional note is stored on your verification queue. Set skip_check: true to submit without a fresh provider check. Alias: POST /v1/verify-number/submit.',
+      'Check MTN numbers, then submit any unverified ones for beneficiary approval (same flow as Submit Numbers in the dashboard). Allowed prefixes: 024, 025, 053, 054, 055, 059. Already-verified numbers are skipped. Optional note is stored on your verification queue. Set skip_check: true to submit without a fresh provider check. Alias: POST /v1/verify-number/submit.',
     body: `{
   "phones": ["0559876543", "0538122730"],
   "note": "Agent batch — Accra"
@@ -430,7 +430,7 @@ dashboard orders show "mtn".
 MTN number verification prefixes
 --------------------------------
 Only these local prefixes are accepted by /v1/verify-number and /v1/submit-numbers:
-  024, 025, 053, 054, 055
+  024, 025, 053, 054, 055, 059
 
 Timestamps
 ----------
@@ -448,7 +448,7 @@ Quick Start
 1. Top up via MoMo — see My API Balance for instructions and your 5-digit code
 2. Generate an API key from My API
 3. GET /v1/packages — list available network + size_gb bundles
-4. POST /v1/verify-number — pre-check MTN numbers (024/025/053/054/055)
+4. POST /v1/verify-number — pre-check MTN numbers (024/025/053/054/055/059)
 5. POST /v1/submit-numbers — queue unverified MTN numbers for approval
 6. POST /v1/buy-data — purchase data
 7. GET /v1/orders/{reference} — confirm delivery

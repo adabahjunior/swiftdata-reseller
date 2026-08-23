@@ -10,7 +10,7 @@ const corsHeaders = {
 const DATAMART_BASE = 'https://api.datamartgh.shop/api/developer'
 const DATAHUB_BASE = 'https://user.datahubgh.com/api/external'
 /** MTN Ghana prefixes used by Datahub / DataMart verify. */
-const MTN_PREFIX_RE = /^0(24|25|53|54|55)\d{7}$/
+const MTN_PREFIX_RE = /^0(24|25|53|54|55|59)\d{7}$/
 const PHONE_RE = /^0[2-5]\d{8}$/
 
 type ProviderSlug = 'primary' | 'secondary' | 'tertiary'
@@ -209,7 +209,7 @@ function interpretDatahub(
   if (!isMtn(phone)) {
     return invalidResult(
       phone,
-      'Only MTN numbers can be verified (024, 025, 053, 054, 055)',
+      'Only MTN numbers can be verified (024, 025, 053, 054, 055, 059)',
       provider.name,
     )
   }
@@ -300,7 +300,7 @@ function interpretDatamartSingle(
   if (!isMtn(phone)) {
     return invalidResult(
       phone,
-      'Only MTN numbers can be verified (024, 025, 053, 054, 055)',
+      'Only MTN numbers can be verified (024, 025, 053, 054, 055, 059)',
       provider.name,
     )
   }
@@ -405,7 +405,7 @@ function interpretDatamartBulkItem(
     return invalidResult(phone || raw, String(item?.reason ?? 'invalid_number'), provider.name)
   }
   if (!isMtn(phone)) {
-    return invalidResult(phone, 'Only MTN numbers can be verified (024, 025, 053, 054, 055)', provider.name)
+    return invalidResult(phone, 'Only MTN numbers can be verified (024, 025, 053, 054, 055, 059)', provider.name)
   }
 
   if (!item || item.normalized === null) {
@@ -745,7 +745,7 @@ Deno.serve(async (req) => {
           results.push(invalidResult(phone, 'Invalid Ghana phone. Use format 0241234567', providerName))
         } else if (!isMtn(phone)) {
           results.push(
-            invalidResult(phone, 'Only MTN numbers can be verified (024, 025, 053, 054, 055)', providerName),
+            invalidResult(phone, 'Only MTN numbers can be verified (024, 025, 053, 054, 055, 059)', providerName),
           )
         } else {
           toCheck.push(phone)
@@ -959,7 +959,7 @@ Deno.serve(async (req) => {
           results.push({
             phone,
             success: false,
-            error: 'Only MTN numbers can be submitted (024, 025, 053, 054, 055)',
+            error: 'Only MTN numbers can be submitted (024, 025, 053, 054, 055, 059)',
           })
           continue
         }

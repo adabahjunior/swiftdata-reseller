@@ -143,7 +143,7 @@ Content-Type: application/json`}
           </li>
           <li>
             <code className="text-xs bg-secondary px-1 rounded">POST /v1/verify-number</code> — pre-check
-            MTN numbers (<code className="text-xs bg-secondary px-1 rounded">024/025/053/054/055</code>)
+            MTN numbers (<code className="text-xs bg-secondary px-1 rounded">024/025/053/054/055/059</code>)
           </li>
           <li>
             <code className="text-xs bg-secondary px-1 rounded">POST /v1/submit-numbers</code> — submit
@@ -243,7 +243,7 @@ Content-Type: application/json`}
         <h2 className="font-display font-bold text-lg">Verify Status Values</h2>
         <p className="text-sm text-muted-foreground">
           MTN verification only accepts prefixes{' '}
-          <code className="text-xs bg-secondary px-1 rounded">024, 025, 053, 054, 055</code>.
+          <code className="text-xs bg-secondary px-1 rounded">024, 025, 053, 054, 055, 059</code>.
         </p>
         <div className="space-y-2">
           {DOC_VERIFY_STATUSES.map((s) => (

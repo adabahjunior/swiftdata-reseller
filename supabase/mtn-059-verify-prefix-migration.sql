@@ -1,15 +1,5 @@
--- Live number verification updates for agents + admins
+-- Allow MTN 059 prefix for number verification submissions
 
-alter table public.number_verifications replica identity full;
-
-do $$
-begin
-  alter publication supabase_realtime add table public.number_verifications;
-exception
-  when duplicate_object then null;
-end $$;
-
--- Tighten MTN prefixes used for agent/admin verification submissions
 create or replace function public.request_number_verification(
   p_user_id uuid,
   p_phone text,
@@ -24,7 +14,6 @@ declare
   v_phone text := trim(p_phone);
   v_row public.number_verifications%rowtype;
 begin
-  -- Agents submit as themselves; admins may also call this for their own account
   if auth.uid() is distinct from p_user_id and not public.is_admin() then
     return jsonb_build_object('success', false, 'error', 'Unauthorized');
   end if;
@@ -71,3 +60,5 @@ begin
   return jsonb_build_object('success', true, 'record', to_jsonb(v_row));
 end;
 $$;
+
+grant execute on function public.request_number_verification(uuid, text, text) to authenticated;

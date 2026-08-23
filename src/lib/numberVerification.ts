@@ -133,5 +133,5 @@ export async function submitNumbersForVerification(phones: string[], userJwt: st
 }
 
 export function isMtnPhone(phone: string) {
-  return /^0(24|25|53|54|55)\d{7}$/.test(phone)
+  return /^0(24|25|53|54|55|59)\d{7}$/.test(phone)
 }

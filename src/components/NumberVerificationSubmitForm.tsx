@@ -1,8 +1,8 @@
 import { Loader2, Send, ShieldCheck } from 'lucide-react'
 import { useState } from 'react'
 
-export const MTN_VERIFY_PREFIXES = ['024', '025', '053', '054', '055'] as const
-export const MTN_VERIFY_HINT = '024, 025, 053, 054, 055'
+export const MTN_VERIFY_PREFIXES = ['024', '025', '053', '054', '055', '059'] as const
+export const MTN_VERIFY_HINT = '024, 025, 053, 054, 055, 059'
 
 export function normalizeVerifyPhone(raw: string): string {
   let phone = raw.trim().replace(/[\s\-()]/g, '')
@@ -18,7 +18,7 @@ export function parseVerifyPhones(text: string): string[] {
 }
 
 export function isAllowedMtnVerifyPhone(phone: string) {
-  return /^0(24|25|53|54|55)\d{7}$/.test(phone)
+  return /^0(24|25|53|54|55|59)\d{7}$/.test(phone)
 }
 
 type Props = {

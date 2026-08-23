@@ -64,8 +64,11 @@ begin
     return jsonb_build_object('success', false, 'error', 'Unauthorized');
   end if;
 
-  if v_phone !~ '^0[2-5][0-9]{8}$' then
-    return jsonb_build_object('success', false, 'error', 'Invalid Ghana phone number');
+  if v_phone !~ '^0(24|25|53|54|55|59)[0-9]{7}$' then
+    return jsonb_build_object(
+      'success', false,
+      'error', 'Only MTN numbers starting with 024, 025, 053, 054, 055, or 059 are allowed'
+    );
   end if;
 
   select * into v_row
