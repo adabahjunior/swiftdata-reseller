@@ -9,6 +9,7 @@ const corsHeaders = {
 const DATAHUB_BASE = 'https://user.datahubgh.com/api/external'
 const SKPLUG_BASE = 'https://skdataplug.com/api/v1'
 const DATAMART_BASE = 'https://api.datamartgh.shop/api/developer'
+const BUNDLEZONE_BASE = 'https://bundlezone.shop/api'
 
 /** Our DB network → Datahub networkKey */
 const DATAHUB_NETWORK_MAP: Record<string, string> = {
@@ -34,6 +35,14 @@ const DATAMART_NETWORK_MAP: Record<string, string> = {
   telecel: 'TELECEL',
 }
 
+/** Our DB network → BundleZone network (exact values from /api/bundles.php) */
+const BUNDLEZONE_NETWORK_MAP: Record<string, string> = {
+  mtn: 'YELLO',
+  at_ishare: 'AT',
+  at_bigtime: 'AIRTELTIGO B',
+  telecel: 'TELECEL',
+}
+
 type OrderRow = {
   id: string
   reference: string
@@ -44,8 +53,8 @@ type OrderRow = {
   provider_submitted_at: string | null
 }
 
-type ProviderSlug = 'primary' | 'secondary' | 'tertiary'
-type ProviderType = 'datahub' | 'skplug' | 'datamart'
+type ProviderSlug = 'primary' | 'secondary' | 'tertiary' | 'quaternary'
+type ProviderType = 'datahub' | 'skplug' | 'datamart' | 'bundlezone'
 
 type ActiveProvider = {
   slug: ProviderSlug
@@ -56,13 +65,14 @@ type ActiveProvider = {
 
 function normalizeProviderType(raw: string | undefined, fallback: ProviderType): ProviderType {
   const t = (raw ?? fallback).trim().toLowerCase()
-  if (t === 'skplug' || t === 'datamart' || t === 'datahub') return t
+  if (t === 'skplug' || t === 'datamart' || t === 'datahub' || t === 'bundlezone') return t
   return fallback
 }
 
 function defaultProviderName(type: ProviderType, slug: ProviderSlug) {
   if (type === 'skplug') return slug === 'secondary' ? 'SK Plug' : 'SK Plug'
   if (type === 'datamart') return 'DataMart GH'
+  if (type === 'bundlezone') return 'BundleZone'
   return slug === 'primary' ? 'Primary Datahub' : 'Datahub'
 }
 
@@ -87,12 +97,7 @@ function keyForSlug(
   type: ProviderType,
   envFallback?: string | null,
 ) {
-  const slotKey =
-    slug === 'tertiary'
-      ? settingsMap.data_provider_tertiary_api_key?.trim() || ''
-      : slug === 'secondary'
-        ? settingsMap.data_provider_secondary_api_key?.trim() || ''
-        : settingsMap.data_provider_primary_api_key?.trim() || ''
+  const slotKey = settingsMap[`data_provider_${slug}_api_key`]?.trim() || ''
   if (slotKey) return slotKey
   if (type === 'datahub') return envFallback?.trim() || ''
   return ''
@@ -104,7 +109,23 @@ function getActiveProvider(
 ): ActiveProvider {
   const raw = (settingsMap.active_data_provider || 'primary').trim().toLowerCase()
   const slug: ProviderSlug =
-    raw === 'tertiary' ? 'tertiary' : raw === 'secondary' ? 'secondary' : 'primary'
+    raw === 'quaternary'
+      ? 'quaternary'
+      : raw === 'tertiary'
+        ? 'tertiary'
+        : raw === 'secondary'
+          ? 'secondary'
+          : 'primary'
+
+  if (slug === 'quaternary') {
+    const type = normalizeProviderType(settingsMap.data_provider_quaternary_type, 'bundlezone')
+    return {
+      slug,
+      type,
+      name: settingsMap.data_provider_quaternary_name?.trim() || defaultProviderName(type, slug),
+      apiKey: keyForSlug(settingsMap, slug, type, envFallback),
+    }
+  }
 
   if (slug === 'tertiary') {
     const type = normalizeProviderType(settingsMap.data_provider_tertiary_type, 'datahub')
@@ -243,11 +264,56 @@ async function datamartPurchase(
   }
 }
 
+async function bundlezonePurchase(
+  apiKey: string,
+  payload: { network: string; recipient: string; capacity: number },
+): Promise<PurchaseResult> {
+  const res = await fetch(`${BUNDLEZONE_BASE}/order.php`, {
+    method: 'POST',
+    headers: {
+      'x-api-key': apiKey,
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    },
+    body: JSON.stringify({ mode: 'single', ...payload }),
+  })
+  const body = await res.json().catch(() => ({}))
+  const data = (body?.data ?? {}) as Record<string, unknown>
+  const order = (data.order ?? {}) as Record<string, unknown>
+  const orderStatus = String(order.status ?? '').toLowerCase()
+  const success =
+    res.ok &&
+    body?.success === true &&
+    order.success !== false &&
+    orderStatus !== 'failed'
+
+  const reference = order.reference ?? data.reference ?? null
+  const orderId = order.order_id ?? order.id ?? data.order_id ?? null
+  const code = String(order.code ?? data.code ?? body?.code ?? '')
+  const message = String(body?.message ?? order.message ?? `BundleZone rejected order (${res.status})`)
+
+  return {
+    success,
+    providerRef: reference ? String(reference) : null,
+    providerOrderNo: orderId ? String(orderId) : null,
+    error: success ? null : code ? `${code}: ${message}` : message,
+    raw: body as Record<string, unknown>,
+  }
+}
+
 async function purchaseWithProvider(
   provider: ActiveProvider,
   order: OrderRow,
   mtnNetworkKey: string,
 ): Promise<PurchaseResult> {
+  if (provider.type === 'bundlezone') {
+    return bundlezonePurchase(provider.apiKey, {
+      network: BUNDLEZONE_NETWORK_MAP[order.network] ?? order.network.toUpperCase(),
+      recipient: order.phone,
+      capacity: Number(order.size_gb),
+    })
+  }
+
   if (provider.type === 'skplug') {
     const network = SKPLUG_NETWORK_MAP[order.network] ?? order.network.toUpperCase()
     return skplugPurchase(provider.apiKey, {
@@ -282,6 +348,14 @@ async function purchaseWithProvider(
 }
 
 async function providerHealth(provider: ActiveProvider) {
+  if (provider.type === 'bundlezone') {
+    const res = await fetch(`${BUNDLEZONE_BASE}/balance.php`, {
+      headers: { 'x-api-key': provider.apiKey, Accept: 'application/json' },
+    })
+    const body = await res.json().catch(() => ({}))
+    return { ok: res.ok && body?.success === true, body }
+  }
+
   if (provider.type === 'skplug') {
     const res = await fetch(`${SKPLUG_BASE}/bundles/`, {
       headers: { Authorization: `Bearer ${provider.apiKey}` },
@@ -519,7 +593,7 @@ Deno.serve(async (req) => {
     return json({
       success: true,
       endpoints: {
-        'POST /process': 'Submit pending orders to the active provider (Datahub, SK Plug, or DataMart; primary/secondary/tertiary)',
+        'POST /process': 'Submit pending orders to the active provider (Datahub, SK Plug, DataMart, or BundleZone; primary/secondary/tertiary/quaternary)',
         'POST /order/{id}': 'Submit one order to the active provider',
         'GET /health': 'Check active provider connection',
       },

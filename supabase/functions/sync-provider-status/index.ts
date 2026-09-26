@@ -3,13 +3,17 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.49.1'
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers':
-    'authorization, x-client-info, apikey, content-type, x-datahub-signature, x-webhook-signature',
+    'authorization, x-client-info, apikey, content-type, x-datahub-signature, x-webhook-signature, x-bundlezone-timestamp, x-bundlezone-signature',
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
 }
 
 const DATAHUB_BASE = 'https://user.datahubgh.com/api/external'
 const SKPLUG_BASE = 'https://skdataplug.com/api/v1'
 const DATAMART_BASE = 'https://api.datamartgh.shop/api/developer'
+const BUNDLEZONE_BASE = 'https://bundlezone.shop/api'
+const BUNDLEZONE_WEBHOOK_MAX_AGE_SECONDS = 300
+
+type ProviderType = 'datahub' | 'skplug' | 'datamart' | 'bundlezone'
 
 type OrderRow = {
   id: string
@@ -117,23 +121,47 @@ async function fetchDatamartStatus(apiKey: string, reference: string) {
   return { ok: false, status: null, body }
 }
 
-function resolveProviderType(order: OrderRow): 'datahub' | 'skplug' | 'datamart' {
+async function fetchBundlezoneStatus(apiKey: string, reference: string | null, orderId: string | null) {
+  const lookups: Array<[string, string]> = []
+  if (reference) lookups.push(['reference', reference])
+  if (orderId) lookups.push(['order_id', orderId])
+  if (lookups.length === 0) return { ok: false, status: null, body: { error: 'No BundleZone reference' } }
+
+  let lastBody: unknown = null
+  for (const [param, value] of lookups) {
+    const res = await fetch(
+      `${BUNDLEZONE_BASE}/status.php?${param}=${encodeURIComponent(value)}`,
+      { headers: { 'x-api-key': apiKey, Accept: 'application/json' } },
+    )
+    const body = (await res.json().catch(() => ({}))) as Record<string, unknown>
+    lastBody = body
+    const data = (body.data ?? {}) as Record<string, unknown>
+    const order = (data.order ?? {}) as Record<string, unknown>
+    const status = order.status ?? data.status ?? (body.success ? body.status : null)
+    if (body.success && status) return { ok: true, status: String(status), body }
+  }
+  return { ok: false, status: null, body: lastBody ?? { error: 'Status not found' } }
+}
+
+function resolveProviderType(order: OrderRow): ProviderType {
   if (
     order.provider_type === 'skplug' ||
     order.provider_type === 'datahub' ||
-    order.provider_type === 'datamart'
+    order.provider_type === 'datamart' ||
+    order.provider_type === 'bundlezone'
   ) {
     return order.provider_type
   }
   const name = order.provider_name?.toLowerCase() ?? ''
   if (name.includes('sk plug') || name.includes('skplug')) return 'skplug'
   if (name.includes('datamart')) return 'datamart'
+  if (name.includes('bundlezone') || name.includes('bundle zone')) return 'bundlezone'
   return 'datahub'
 }
 
 function credentialForType(
   settingsMap: Record<string, string>,
-  type: 'datahub' | 'skplug' | 'datamart',
+  type: ProviderType,
 ) {
   const slots: Array<{ type: string; key: string }> = [
     {
@@ -148,12 +176,17 @@ function credentialForType(
       type: (settingsMap.data_provider_tertiary_type || 'datahub').trim().toLowerCase(),
       key: settingsMap.data_provider_tertiary_api_key?.trim() || '',
     },
+    {
+      type: (settingsMap.data_provider_quaternary_type || 'bundlezone').trim().toLowerCase(),
+      key: settingsMap.data_provider_quaternary_api_key?.trim() || '',
+    },
   ]
   const match = slots.find((s) => s.type === type && s.key)
   if (match?.key) return match.key
 
   if (type === 'datamart') return settingsMap.datamart_api_key?.trim() || ''
   if (type === 'datahub') return Deno.env.get('DATAHUB_API_KEY')?.trim() || ''
+  if (type === 'bundlezone') return ''
   return slots.map((s) => s.key).find(Boolean) || ''
 }
 
@@ -194,6 +227,107 @@ async function verifyDatahubSignature(req: Request, rawBody: string, secret: str
   return timingSafeEqual(provided, expected)
 }
 
+async function verifyBundlezoneSignature(req: Request, rawBody: string, secret: string) {
+  if (!secret) return { ok: false, error: 'BundleZone webhook secret is not configured' }
+  const timestamp = req.headers.get('x-bundlezone-timestamp')?.trim() ?? ''
+  const header = req.headers.get('x-bundlezone-signature')?.trim() ?? ''
+  if (!/^\d+$/.test(timestamp) || !header) {
+    return { ok: false, error: 'Missing webhook authentication' }
+  }
+  if (Math.abs(Date.now() / 1000 - Number(timestamp)) > BUNDLEZONE_WEBHOOK_MAX_AGE_SECONDS) {
+    return { ok: false, error: 'Expired webhook timestamp' }
+  }
+  const provided = header.replace(/^sha256=/i, '').toLowerCase()
+  const expected = (await hmacSha256Hex(secret, `${timestamp}.${rawBody}`)).toLowerCase()
+  return timingSafeEqual(provided, expected)
+    ? { ok: true, error: null }
+    : { ok: false, error: 'Invalid webhook signature' }
+}
+
+async function handleBundlezoneWebhook(
+  supabase: ReturnType<typeof createClient>,
+  req: Request,
+  rawBody: string,
+  settingsMap: Record<string, string>,
+) {
+  const verified = await verifyBundlezoneSignature(
+    req,
+    rawBody,
+    settingsMap.bundlezone_webhook_secret?.trim() || '',
+  )
+  if (!verified.ok) return json({ success: false, error: verified.error }, 401)
+
+  let body: Record<string, unknown>
+  try {
+    body = JSON.parse(rawBody || '{}') as Record<string, unknown>
+  } catch {
+    return json({ success: false, error: 'Invalid JSON payload' }, 400)
+  }
+
+  if (body.event !== 'order.status_changed') {
+    return json({ success: true, ignored: true, event: body.event ?? null })
+  }
+
+  const data = (body.data ?? {}) as Record<string, unknown>
+  const status = data.status ? String(data.status) : null
+  if (!status) return json({ success: false, error: 'Missing status in webhook payload' }, 400)
+
+  const reference = data.reference ? String(data.reference) : null
+  const orderId = data.order_id != null ? String(data.order_id) : null
+
+  let order: Record<string, unknown> | null = null
+  if (reference) {
+    const { data: row } = await supabase
+      .from('orders')
+      .select('*')
+      .eq('provider_type', 'bundlezone')
+      .eq('provider_reference', reference)
+      .maybeSingle()
+    order = row
+  }
+  if (!order && orderId) {
+    const { data: row } = await supabase
+      .from('orders')
+      .select('*')
+      .eq('provider_type', 'bundlezone')
+      .eq('provider_order_number', orderId)
+      .maybeSingle()
+    order = row
+  }
+  if (!order && data.recipient && data.capacity != null) {
+    const { data: rows } = await supabase
+      .from('orders')
+      .select('*')
+      .eq('provider_type', 'bundlezone')
+      .eq('phone', String(data.recipient))
+      .eq('size_gb', Number(data.capacity))
+      .is('provider_reference', null)
+      .is('provider_order_number', null)
+      .in('status', ['pending', 'processing'])
+      .order('provider_submitted_at', { ascending: false })
+      .limit(1)
+    order = rows?.[0] ?? null
+  }
+
+  if (!order) {
+    return json({ success: true, message: 'Order not found locally', reference, order_id: orderId })
+  }
+
+  const mapped = mapProviderStatus(status)
+  const update: Record<string, unknown> = { provider_status: mapped.providerStatus }
+  if (reference && !order.provider_reference) update.provider_reference = reference
+  if (orderId && !order.provider_order_number) update.provider_order_number = orderId
+  const currentStatus = String(order.status)
+  if (mapped.orderStatus && shouldApplyOrderStatus(currentStatus, mapped.orderStatus)) {
+    update.status = mapped.orderStatus
+    if (mapped.orderStatus === 'completed') update.completed_at = new Date().toISOString()
+    if (mapped.orderStatus === 'failed') update.failure_reason = `Provider webhook: ${status}`
+  }
+
+  await supabase.from('orders').update(update).eq('id', order.id)
+  return json({ success: true, order_id: order.id, status: update.status ?? currentStatus })
+}
+
 function shouldApplyOrderStatus(current: string, next: string | null) {
   if (!next || next === current) return false
   if (current === 'completed' && next === 'processing') return false
@@ -209,7 +343,16 @@ async function syncOrderStatus(
   const credential = credentialForType(settingsMap, providerType)
   let result: { ok: boolean; status: string | null; body: unknown }
 
-  if (providerType === 'skplug') {
+  if (providerType === 'bundlezone') {
+    if (!credential) {
+      return { order_id: order.id, skipped: true, reason: 'No BundleZone API key' }
+    }
+    result = await fetchBundlezoneStatus(
+      credential,
+      order.provider_reference,
+      order.provider_order_number,
+    )
+  } else if (providerType === 'skplug') {
     const orderId = order.provider_order_number ?? order.provider_reference ?? order.reference
     if (!credential) {
       return { order_id: order.id, skipped: true, reason: 'No SK Plug token' }
@@ -312,6 +455,13 @@ Deno.serve(async (req) => {
   const isWebhook = webhookIdx >= 0 || path.includes('/datahub')
 
   try {
+    if (isWebhook && req.method === 'POST' && path.includes('/bundlezone')) {
+      const rawBody = await req.text()
+      const { data: settings } = await supabase.from('site_settings').select('key, value')
+      const settingsMap = Object.fromEntries((settings ?? []).map((s) => [s.key, s.value]))
+      return await handleBundlezoneWebhook(supabase, req, rawBody, settingsMap)
+    }
+
     if (isWebhook && req.method === 'POST') {
       const rawBody = await req.text()
       const body = (() => {
@@ -402,6 +552,7 @@ Deno.serve(async (req) => {
       endpoints: {
         'POST /process': 'Poll provider APIs and update order statuses',
         'POST /provider-webhook/datahub': 'Receive Datahub webhook callbacks',
+        'POST /provider-webhook/bundlezone': 'Receive signed BundleZone order.status_changed callbacks',
       },
     })
   } catch (e) {
