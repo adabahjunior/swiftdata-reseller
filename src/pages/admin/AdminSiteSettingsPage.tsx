@@ -45,7 +45,11 @@ const PROVIDER_SETTING_KEYS = new Set([
   'datamart_name',
   'datahub_webhook_secret',
   'bundlezone_webhook_secret',
+  'provider_auto_reroute_enabled',
+  'provider_reroute_chain',
 ])
+
+const DEFAULT_REROUTE_CHAIN = PROVIDER_SLOTS.map((s) => s.slug).join(',')
 
 const XCEL_SETTING_KEYS = new Set([
   'xcel_enabled',
@@ -133,6 +137,8 @@ export default function AdminSiteSettingsPage() {
       ['datamart_name', getValue('datamart_name', 'DataMart GH'), 'DataMart display name'],
       ['datahub_webhook_secret', getValue('datahub_webhook_secret'), 'Datahub HMAC secret for X-Webhook-Signature'],
       ['bundlezone_webhook_secret', getValue('bundlezone_webhook_secret'), 'BundleZone webhook secret for X-BundleZone-Signature'],
+      ['provider_auto_reroute_enabled', getValue('provider_auto_reroute_enabled', 'true'), 'Automatically re-send rejected orders to the next provider'],
+      ['provider_reroute_chain', getValue('provider_reroute_chain', DEFAULT_REROUTE_CHAIN), 'Fallback order of provider slots for auto re-routing'],
     ]
 
     for (const [key, value, label] of providerUpdates) {
@@ -280,7 +286,34 @@ export default function AdminSiteSettingsPage() {
     ...slot,
     name: getValue(`data_provider_${slot.slug}_name`, slot.defaultName),
     type: getValue(`data_provider_${slot.slug}_type`, slot.defaultType),
+    hasKey: Boolean(getValue(`data_provider_${slot.slug}_api_key`).trim()),
   }))
+  const rerouteEnabled = getValue('provider_auto_reroute_enabled', 'true') !== 'false'
+  const rerouteChain = getValue('provider_reroute_chain', DEFAULT_REROUTE_CHAIN)
+    .split(',')
+    .map((s) => s.trim())
+    .filter((s) => slots.some((slot) => slot.slug === s))
+  const rerouteRows = [
+    ...rerouteChain.map((slug) => ({ slug, included: true })),
+    ...slots.filter((s) => !rerouteChain.includes(s.slug)).map((s) => ({ slug: s.slug, included: false })),
+  ].map((row) => ({ ...row, slot: slots.find((s) => s.slug === row.slug)! }))
+
+  const setRerouteChain = (next: string[]) =>
+    setDraft({ ...draft, provider_reroute_chain: next.join(',') })
+
+  const moveInChain = (slug: string, delta: number) => {
+    const next = [...rerouteChain]
+    const from = next.indexOf(slug)
+    const to = from + delta
+    if (from < 0 || to < 0 || to >= next.length) return
+    ;[next[from], next[to]] = [next[to], next[from]]
+    setRerouteChain(next)
+  }
+
+  const toggleInChain = (slug: string) =>
+    setRerouteChain(
+      rerouteChain.includes(slug) ? rerouteChain.filter((s) => s !== slug) : [...rerouteChain, slug],
+    )
 
   return (
     <div className="space-y-6 md:space-y-8">
@@ -389,6 +422,95 @@ export default function AdminSiteSettingsPage() {
                   <p className="text-[11px] text-muted-foreground">{providerTypeHint(type)}</p>
                 </div>
               ))}
+            </div>
+
+            <div className="rounded-xl border border-white/10 p-4 space-y-4">
+              <div className="flex items-start justify-between gap-4 flex-wrap">
+                <div className="max-w-xl">
+                  <h3 className="text-sm font-semibold">Auto re-routing</h3>
+                  <p className="text-[11px] text-muted-foreground mt-1">
+                    When a provider definitely rejects an order, or later reports it failed, the order is sent to
+                    the next provider below until one accepts it. The active provider is always tried first. Each
+                    provider receives an order at most once per routing round. Unclear responses (timeouts, server
+                    errors) are never re-routed and are flagged for review instead, so nothing is bought twice.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setDraft({ ...draft, provider_auto_reroute_enabled: rerouteEnabled ? 'false' : 'true' })
+                  }
+                  className={`h-9 px-4 rounded-lg border text-xs font-bold shrink-0 ${
+                    rerouteEnabled
+                      ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-400'
+                      : 'border-white/10 bg-secondary/40 text-muted-foreground'
+                  }`}
+                >
+                  {rerouteEnabled ? 'Enabled' : 'Disabled'}
+                </button>
+              </div>
+
+              <div className={`space-y-2 ${rerouteEnabled ? '' : 'opacity-50 pointer-events-none'}`}>
+                <p className="text-xs text-muted-foreground">Fallback order</p>
+                {rerouteRows.map(({ slug, included, slot }) => {
+                  const position = rerouteChain.indexOf(slug)
+                  return (
+                    <div
+                      key={slug}
+                      className={`flex items-center gap-3 rounded-lg border px-3 py-2 ${
+                        included ? 'border-white/10 bg-secondary/30' : 'border-white/5 bg-transparent opacity-60'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={included}
+                        onChange={() => toggleInChain(slug)}
+                        aria-label={`Include ${slot.name} in re-routing`}
+                        className="rounded border-white/20"
+                      />
+                      <span className="w-5 text-xs font-mono text-muted-foreground">
+                        {included ? position + 1 : '—'}
+                      </span>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium truncate">
+                          {slot.name}{' '}
+                          <span className="text-[11px] text-muted-foreground">
+                            ({slot.title} · {providerTypeLabel(slot.type)})
+                          </span>
+                        </p>
+                        {!slot.hasKey && (
+                          <p className="text-[10px] text-amber-400">No API key — skipped</p>
+                        )}
+                        {activeProvider === slug && (
+                          <p className="text-[10px] text-emerald-400">Active — always tried first</p>
+                        )}
+                      </div>
+                      {included && (
+                        <div className="flex gap-1">
+                          <button
+                            type="button"
+                            onClick={() => moveInChain(slug, -1)}
+                            disabled={position === 0}
+                            aria-label={`Move ${slot.name} up`}
+                            className="h-7 w-7 rounded border border-white/10 text-xs disabled:opacity-30 hover:bg-white/5"
+                          >
+                            ↑
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => moveInChain(slug, 1)}
+                            disabled={position === rerouteChain.length - 1}
+                            aria-label={`Move ${slot.name} down`}
+                            className="h-7 w-7 rounded border border-white/10 text-xs disabled:opacity-30 hover:bg-white/5"
+                          >
+                            ↓
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
             </div>
 
             <div className="rounded-xl border border-white/10 p-4 space-y-3 max-w-xl">

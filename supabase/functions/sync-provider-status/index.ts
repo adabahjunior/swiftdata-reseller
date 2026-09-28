@@ -15,6 +15,15 @@ const BUNDLEZONE_WEBHOOK_MAX_AGE_SECONDS = 300
 
 type ProviderType = 'datahub' | 'skplug' | 'datamart' | 'bundlezone'
 
+const PROVIDER_SLUGS = ['primary', 'secondary', 'tertiary', 'quaternary'] as const
+
+const SLOT_DEFAULT_TYPE: Record<string, ProviderType> = {
+  primary: 'datahub',
+  secondary: 'skplug',
+  tertiary: 'datahub',
+  quaternary: 'bundlezone',
+}
+
 type OrderRow = {
   id: string
   reference: string
@@ -24,6 +33,8 @@ type OrderRow = {
   provider_status: string | null
   provider_type: string | null
   provider_name: string | null
+  provider_attempt_id?: string | null
+  provider_route_round?: number | null
 }
 
 function json(data: unknown, status = 200) {
@@ -313,19 +324,21 @@ async function handleBundlezoneWebhook(
     return json({ success: true, message: 'Order not found locally', reference, order_id: orderId })
   }
 
-  const mapped = mapProviderStatus(status)
-  const update: Record<string, unknown> = { provider_status: mapped.providerStatus }
-  if (reference && !order.provider_reference) update.provider_reference = reference
-  if (orderId && !order.provider_order_number) update.provider_order_number = orderId
-  const currentStatus = String(order.status)
-  if (mapped.orderStatus && shouldApplyOrderStatus(currentStatus, mapped.orderStatus)) {
-    update.status = mapped.orderStatus
-    if (mapped.orderStatus === 'completed') update.completed_at = new Date().toISOString()
-    if (mapped.orderStatus === 'failed') update.failure_reason = `Provider webhook: ${status}`
+  const row = order as unknown as OrderRow
+  const refs: Record<string, unknown> = {}
+  if (reference && !row.provider_reference) refs.provider_reference = reference
+  if (orderId && !row.provider_order_number) refs.provider_order_number = orderId
+  if (row.provider_attempt_id && Object.keys(refs).length > 0) {
+    await supabase.from('order_provider_attempts').update(refs).eq('id', row.provider_attempt_id)
   }
 
-  await supabase.from('orders').update(update).eq('id', order.id)
-  return json({ success: true, order_id: order.id, status: update.status ?? currentStatus })
+  if (mapProviderStatus(status).providerStatus === 'failed') {
+    const outcome = await handleProviderFailure(supabase, row, settingsMap, status, 'BundleZone webhook')
+    return json({ success: true, order_id: row.id, ...outcome })
+  }
+
+  const applied = await applyProviderStatus(supabase, row, status, refs)
+  return json({ success: true, order_id: row.id, status: applied.order_status })
 }
 
 function shouldApplyOrderStatus(current: string, next: string | null) {
@@ -334,13 +347,174 @@ function shouldApplyOrderStatus(current: string, next: string | null) {
   return true
 }
 
+function isRerouteEnabled(settingsMap: Record<string, string>) {
+  return settingsMap.provider_auto_reroute_enabled !== 'false'
+}
+
+function slotCredential(settingsMap: Record<string, string>, slug: string) {
+  const key = settingsMap[`data_provider_${slug}_api_key`]?.trim() || ''
+  if (key) return key
+  const type = (settingsMap[`data_provider_${slug}_type`] || SLOT_DEFAULT_TYPE[slug] || '').trim().toLowerCase()
+  return type === 'datahub' ? Deno.env.get('DATAHUB_API_KEY')?.trim() || '' : ''
+}
+
+/** Same ordering as fulfill-orders: active slot first, then the fallback chain; slots without a key are skipped. */
+function rerouteCandidates(settingsMap: Record<string, string>) {
+  const parse = (raw: string | undefined) => {
+    const s = (raw ?? '').trim().toLowerCase()
+    return (PROVIDER_SLUGS as readonly string[]).includes(s) ? s : null
+  }
+  const active = parse(settingsMap.active_data_provider) ?? 'primary'
+  const configured = (settingsMap.provider_reroute_chain || PROVIDER_SLUGS.join(','))
+    .split(',')
+    .map(parse)
+    .filter((s): s is string => s !== null)
+  return [...new Set([active, ...configured])].filter((slug) => slotCredential(settingsMap, slug))
+}
+
+function triggerFulfillment(orderId: string) {
+  const base = Deno.env.get('SUPABASE_URL')
+  const key = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
+  if (!base || !key) return
+  const pending = fetch(`${base}/functions/v1/fulfill-orders/order/${orderId}`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${key}` },
+  }).catch(() => {
+    /* the 15s fulfillment poll picks the order up anyway */
+  })
+  const runtime = (globalThis as { EdgeRuntime?: { waitUntil?: (p: Promise<unknown>) => void } }).EdgeRuntime
+  runtime?.waitUntil?.(pending)
+}
+
+/**
+ * The provider handling the order's current attempt reported a final failure.
+ * Re-route to the next untried provider, or fail the order when none are left.
+ * Every write is conditional on provider_attempt_id so a late report about an
+ * earlier attempt can never bounce an order that is already live elsewhere.
+ */
+async function handleProviderFailure(
+  supabase: ReturnType<typeof createClient>,
+  order: OrderRow,
+  settingsMap: Record<string, string>,
+  rawStatus: string,
+  source: string,
+) {
+  const attemptId = order.provider_attempt_id ?? null
+  const reason = `${order.provider_name ?? 'Provider'} reported "${rawStatus}" (${source})`
+
+  if (!attemptId && order.provider_status === 'rerouting') {
+    return { rerouted: false, stale: true, order_status: order.status }
+  }
+
+  if (attemptId) {
+    await supabase
+      .from('order_provider_attempts')
+      .update({ outcome: 'failed_later', error: reason, finished_at: new Date().toISOString() })
+      .eq('id', attemptId)
+      .eq('outcome', 'accepted')
+  }
+
+  if (attemptId && isRerouteEnabled(settingsMap)) {
+    const { data: tried } = await supabase
+      .from('order_provider_attempts')
+      .select('provider_slot')
+      .eq('order_id', order.id)
+      .eq('route_round', order.provider_route_round ?? 0)
+    const triedSlots = new Set((tried ?? []).map((t) => String(t.provider_slot)))
+    const remaining = rerouteCandidates(settingsMap).filter((slug) => !triedSlots.has(slug))
+
+    if (remaining.length > 0) {
+      const { data: reset } = await supabase
+        .from('orders')
+        .update({
+          provider_submitted_at: null,
+          provider_status: 'rerouting',
+          provider_reference: null,
+          provider_order_number: null,
+          provider_attempt_id: null,
+          provider_error: `${reason} — re-routing to the next provider`,
+        })
+        .eq('id', order.id)
+        .eq('provider_attempt_id', attemptId)
+        .select('id')
+      if (reset?.length) {
+        triggerFulfillment(order.id)
+        return { rerouted: true, next_slots: remaining, order_status: order.status }
+      }
+      return { rerouted: false, stale: true, order_status: order.status }
+    }
+  }
+
+  const update: Record<string, unknown> = { provider_status: 'failed', provider_error: reason }
+  if (shouldApplyOrderStatus(order.status, 'failed')) {
+    update.status = 'failed'
+    update.failure_reason = reason
+  }
+  await guardedOrderUpdate(supabase, order, update)
+  return { rerouted: false, final: true, order_status: update.status ?? order.status }
+}
+
+/** Update only if the order is still on the attempt (or, for pre-reroute orders, the provider status) we read. */
+function guardedOrderUpdate(
+  supabase: ReturnType<typeof createClient>,
+  order: OrderRow,
+  update: Record<string, unknown>,
+) {
+  let query = supabase.from('orders').update(update).eq('id', order.id)
+  if (order.provider_attempt_id) {
+    query = query.eq('provider_attempt_id', order.provider_attempt_id)
+  } else {
+    query = query.is('provider_attempt_id', null)
+    if (order.provider_status) query = query.eq('provider_status', order.provider_status)
+  }
+  return query
+}
+
+/** Apply a non-failure provider status, only if the order is still on the same attempt. */
+async function applyProviderStatus(
+  supabase: ReturnType<typeof createClient>,
+  order: OrderRow,
+  rawStatus: string,
+  extra: Record<string, unknown> = {},
+) {
+  if (!order.provider_attempt_id && order.provider_status === 'rerouting') {
+    return { provider_status: 'rerouting', order_status: order.status, stale: true }
+  }
+  const mapped = mapProviderStatus(rawStatus)
+  const update: Record<string, unknown> = { provider_status: mapped.providerStatus, ...extra }
+  if (mapped.orderStatus && shouldApplyOrderStatus(order.status, mapped.orderStatus)) {
+    update.status = mapped.orderStatus
+    if (mapped.orderStatus === 'completed') update.completed_at = new Date().toISOString()
+  }
+  await guardedOrderUpdate(supabase, order, update)
+  return { provider_status: mapped.providerStatus, order_status: update.status ?? order.status }
+}
+
+async function credentialForOrder(
+  supabase: ReturnType<typeof createClient>,
+  order: OrderRow,
+  settingsMap: Record<string, string>,
+  providerType: ProviderType,
+) {
+  if (order.provider_attempt_id) {
+    const { data } = await supabase
+      .from('order_provider_attempts')
+      .select('provider_slot')
+      .eq('id', order.provider_attempt_id)
+      .maybeSingle()
+    const key = data?.provider_slot ? slotCredential(settingsMap, String(data.provider_slot)) : ''
+    if (key) return key
+  }
+  return credentialForType(settingsMap, providerType)
+}
+
 async function syncOrderStatus(
   supabase: ReturnType<typeof createClient>,
   order: OrderRow,
   settingsMap: Record<string, string>,
 ) {
   const providerType = resolveProviderType(order)
-  const credential = credentialForType(settingsMap, providerType)
+  const credential = await credentialForOrder(supabase, order, settingsMap, providerType)
   let result: { ok: boolean; status: string | null; body: unknown }
 
   if (providerType === 'bundlezone') {
@@ -386,30 +560,26 @@ async function syncOrderStatus(
     }
   }
 
-  const mapped = mapProviderStatus(result.status)
-  const update: Record<string, unknown> = {
-    provider_status: mapped.providerStatus,
-  }
-
-  if (mapped.orderStatus && shouldApplyOrderStatus(order.status, mapped.orderStatus)) {
-    update.status = mapped.orderStatus
-    if (mapped.orderStatus === 'completed') {
-      update.completed_at = new Date().toISOString()
-    }
-    if (mapped.orderStatus === 'failed') {
-      update.failure_reason = `Provider reported: ${result.status}`
+  if (mapProviderStatus(result.status).providerStatus === 'failed') {
+    const outcome = await handleProviderFailure(supabase, order, settingsMap, result.status, 'status check')
+    return {
+      order_id: order.id,
+      reference: order.reference,
+      success: true,
+      provider_type: providerType,
+      provider_status: outcome.rerouted ? 'rerouting' : 'failed',
+      raw_status: result.status,
+      ...outcome,
     }
   }
 
-  await supabase.from('orders').update(update).eq('id', order.id)
-
+  const applied = await applyProviderStatus(supabase, order, result.status)
   return {
     order_id: order.id,
     reference: order.reference,
     success: true,
     provider_type: providerType,
-    provider_status: mapped.providerStatus,
-    order_status: update.status ?? order.status,
+    ...applied,
     raw_status: result.status,
   }
 }
@@ -499,18 +669,20 @@ Deno.serve(async (req) => {
         return json({ success: true, message: 'Order not found locally', reference, orderNumber })
       }
 
-      const mapped = mapProviderStatus(status)
-      const update: Record<string, unknown> = {
-        provider_status: mapped.providerStatus,
-      }
-      if (mapped.orderStatus && shouldApplyOrderStatus(order.status, mapped.orderStatus)) {
-        update.status = mapped.orderStatus
-        if (mapped.orderStatus === 'completed') update.completed_at = new Date().toISOString()
-        if (mapped.orderStatus === 'failed') update.failure_reason = `Provider webhook: ${status}`
+      const row = order as OrderRow
+      if (resolveProviderType(row) !== 'datahub') {
+        return json({ success: true, ignored: true, reason: 'Order is no longer with Datahub', order_id: row.id })
       }
 
-      await supabase.from('orders').update(update).eq('id', order.id)
-      return json({ success: true, order_id: order.id, status: mapped.orderStatus ?? order.status })
+      // Datahub references are our own order references, so a failure callback cannot be tied
+      // to a specific attempt. Confirm against the current attempt before re-routing.
+      if (mapProviderStatus(status).providerStatus === 'failed') {
+        const confirmed = await syncOrderStatus(supabase, row, settingsMap)
+        return json({ success: true, order_id: row.id, confirmed_by_status_check: true, result: confirmed })
+      }
+
+      const applied = await applyProviderStatus(supabase, row, status)
+      return json({ success: true, order_id: row.id, status: applied.order_status })
     }
 
     if (req.method === 'POST' && (path === '/process' || path === '/')) {

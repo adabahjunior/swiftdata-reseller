@@ -24,6 +24,7 @@ const PROVIDER_FAILED = new Set([
 /** Provider rejected the purchase (even if local status is still Delivered). */
 export function isProviderRejected(order: DeliveryOrder): boolean {
   const provider = order.provider_status?.toLowerCase().trim() ?? ''
+  if (provider === 'rerouting') return false
   if (PROVIDER_FAILED.has(provider)) return true
   return Boolean(order.provider_error?.trim())
 }
@@ -38,6 +39,9 @@ export function canAdminRetryOrder(order: DeliveryOrder): boolean {
 }
 
 export function deliveryStatusLabel(order: DeliveryOrder): string {
+  const providerState = order.provider_status?.toLowerCase().trim()
+  if (providerState === 'rerouting') return 'Re-routing to next provider…'
+  if (providerState === 'uncertain') return 'Needs review — unclear provider response'
   if (order.status === 'completed' && isProviderRejected(order)) {
     return 'Delivered — provider rejected'
   }
@@ -63,7 +67,13 @@ export function deliveryStatusLabel(order: DeliveryOrder): string {
 
 export function deliveryStatusTone(order: DeliveryOrder): 'success' | 'warning' | 'danger' | 'muted' {
   const label = deliveryStatusLabel(order).toLowerCase()
-  if (label.includes('rejected') || label.includes('fail') || label.includes('insufficient')) {
+  if (label.includes('re-routing')) return 'warning'
+  if (
+    label.includes('rejected') ||
+    label.includes('fail') ||
+    label.includes('insufficient') ||
+    label.includes('needs review')
+  ) {
     return 'danger'
   }
   if (label.includes('delivered') && !label.includes('delivering')) return 'success'

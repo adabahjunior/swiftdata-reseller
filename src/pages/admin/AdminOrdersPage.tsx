@@ -2,6 +2,7 @@ import { RefreshCw } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { EmptyState, PageHeader, Panel, StatusBadge } from '../../components/dashboard/ui'
 import AdminOrderExportsPanel from '../../components/admin/AdminOrderExportsPanel'
+import { ProviderRouteHistory } from '../../components/admin/ProviderRouteHistory'
 import { useAuth } from '../../context/AuthContext'
 import { useAdminOrders } from '../../hooks/useAdminData'
 import { canAdminRetryOrder, deliveryStatusLabel, deliveryStatusTone } from '../../lib/deliveryStatus'
@@ -425,6 +426,9 @@ export default function AdminOrdersPage() {
                             <p className="text-[10px] text-red-400 mt-1 max-w-[140px] truncate" title={order.provider_error}>
                               {order.provider_error}
                             </p>
+                          )}
+                          {(order.provider_attempts ?? 0) > 1 && (
+                            <ProviderRouteHistory orderId={order.id} attempts={order.provider_attempts ?? 0} />
                           )}
                         </div>
                       ) : (

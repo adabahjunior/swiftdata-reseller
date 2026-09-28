@@ -10,6 +10,7 @@ const DATAHUB_BASE = 'https://user.datahubgh.com/api/external'
 const SKPLUG_BASE = 'https://skdataplug.com/api/v1'
 const DATAMART_BASE = 'https://api.datamartgh.shop/api/developer'
 const BUNDLEZONE_BASE = 'https://bundlezone.shop/api'
+const REQUEST_TIMEOUT_MS = 25_000
 
 /** Our DB network → Datahub networkKey */
 const DATAHUB_NETWORK_MAP: Record<string, string> = {
@@ -43,6 +44,29 @@ const BUNDLEZONE_NETWORK_MAP: Record<string, string> = {
   telecel: 'TELECEL',
 }
 
+/** BundleZone codes documented as "no order was created and no charge was made". */
+const BUNDLEZONE_NO_ORDER_CODES = new Set([
+  'BENEFICIARY_NOT_VERIFIED',
+  'INVALID_PHONE_NUMBER',
+  'VERIFICATION_PENDING',
+  'VERIFICATION_UNAVAILABLE',
+  'BULK_VERIFICATION_HELD',
+  'ORDER_SERVICE_UNAVAILABLE',
+  'ORDER_REJECTED',
+  'VALIDATION_ERROR',
+  'UNAUTHORIZED',
+  'FORBIDDEN',
+])
+
+const PROVIDER_SLUGS = ['primary', 'secondary', 'tertiary', 'quaternary'] as const
+
+const SLOT_DEFAULT_TYPE: Record<ProviderSlug, ProviderType> = {
+  primary: 'datahub',
+  secondary: 'skplug',
+  tertiary: 'datahub',
+  quaternary: 'bundlezone',
+}
+
 type OrderRow = {
   id: string
   reference: string
@@ -51,9 +75,11 @@ type OrderRow = {
   size_gb: number
   status: string
   provider_submitted_at: string | null
+  provider_route_round?: number | null
+  provider_attempts?: number | null
 }
 
-type ProviderSlug = 'primary' | 'secondary' | 'tertiary' | 'quaternary'
+type ProviderSlug = (typeof PROVIDER_SLUGS)[number]
 type ProviderType = 'datahub' | 'skplug' | 'datamart' | 'bundlezone'
 
 type ActiveProvider = {
@@ -63,6 +89,40 @@ type ActiveProvider = {
   apiKey: string
 }
 
+/**
+ * accepted  — provider took the order.
+ * rejected  — provider confirmed nothing was created; safe to try the next provider.
+ * uncertain — the order may exist at the provider; never re-route automatically.
+ */
+type Outcome = 'accepted' | 'rejected' | 'uncertain'
+
+type PurchaseResult = {
+  outcome: Outcome
+  httpStatus: number | null
+  providerRef: string | null
+  providerOrderNo: string | null
+  error: string | null
+  raw: Record<string, unknown>
+}
+
+type HttpReply = {
+  status: number | null
+  body: Record<string, unknown>
+  parsed: boolean
+  networkError: string | null
+}
+
+type AttemptRow = {
+  provider_slot: string
+  provider_name: string
+  attempt_no: number
+  outcome: string
+  error: string | null
+}
+
+const ORDER_CLAIM_COLUMNS =
+  'id, reference, phone, network, size_gb, status, provider_submitted_at, provider_route_round, provider_attempts'
+
 function normalizeProviderType(raw: string | undefined, fallback: ProviderType): ProviderType {
   const t = (raw ?? fallback).trim().toLowerCase()
   if (t === 'skplug' || t === 'datamart' || t === 'datahub' || t === 'bundlezone') return t
@@ -70,18 +130,10 @@ function normalizeProviderType(raw: string | undefined, fallback: ProviderType):
 }
 
 function defaultProviderName(type: ProviderType, slug: ProviderSlug) {
-  if (type === 'skplug') return slug === 'secondary' ? 'SK Plug' : 'SK Plug'
+  if (type === 'skplug') return 'SK Plug'
   if (type === 'datamart') return 'DataMart GH'
   if (type === 'bundlezone') return 'BundleZone'
   return slug === 'primary' ? 'Primary Datahub' : 'Datahub'
-}
-
-type PurchaseResult = {
-  success: boolean
-  providerRef: string | null
-  providerOrderNo: string | null
-  error: string | null
-  raw: Record<string, unknown>
 }
 
 function json(data: unknown, status = 200) {
@@ -91,92 +143,115 @@ function json(data: unknown, status = 200) {
   })
 }
 
-function keyForSlug(
-  settingsMap: Record<string, string>,
-  slug: ProviderSlug,
-  type: ProviderType,
-  envFallback?: string | null,
-) {
-  const slotKey = settingsMap[`data_provider_${slug}_api_key`]?.trim() || ''
-  if (slotKey) return slotKey
-  if (type === 'datahub') return envFallback?.trim() || ''
-  return ''
+function parseSlug(raw: string | undefined | null): ProviderSlug | null {
+  const s = (raw ?? '').trim().toLowerCase()
+  return (PROVIDER_SLUGS as readonly string[]).includes(s) ? (s as ProviderSlug) : null
 }
 
-function getActiveProvider(
+function providerForSlug(
   settingsMap: Record<string, string>,
+  slug: ProviderSlug,
   envFallback?: string | null,
 ): ActiveProvider {
-  const raw = (settingsMap.active_data_provider || 'primary').trim().toLowerCase()
-  const slug: ProviderSlug =
-    raw === 'quaternary'
-      ? 'quaternary'
-      : raw === 'tertiary'
-        ? 'tertiary'
-        : raw === 'secondary'
-          ? 'secondary'
-          : 'primary'
-
-  if (slug === 'quaternary') {
-    const type = normalizeProviderType(settingsMap.data_provider_quaternary_type, 'bundlezone')
-    return {
-      slug,
-      type,
-      name: settingsMap.data_provider_quaternary_name?.trim() || defaultProviderName(type, slug),
-      apiKey: keyForSlug(settingsMap, slug, type, envFallback),
-    }
-  }
-
-  if (slug === 'tertiary') {
-    const type = normalizeProviderType(settingsMap.data_provider_tertiary_type, 'datahub')
-    return {
-      slug,
-      type,
-      name: settingsMap.data_provider_tertiary_name?.trim() || defaultProviderName(type, slug),
-      apiKey: keyForSlug(settingsMap, slug, type, envFallback),
-    }
-  }
-
-  if (slug === 'secondary') {
-    const type = normalizeProviderType(settingsMap.data_provider_secondary_type, 'skplug')
-    return {
-      slug,
-      type,
-      name: settingsMap.data_provider_secondary_name?.trim() || defaultProviderName(type, slug),
-      apiKey: keyForSlug(settingsMap, slug, type, envFallback),
-    }
-  }
-
-  const type = normalizeProviderType(settingsMap.data_provider_primary_type, 'datahub')
+  const type = normalizeProviderType(settingsMap[`data_provider_${slug}_type`], SLOT_DEFAULT_TYPE[slug])
+  const slotKey = settingsMap[`data_provider_${slug}_api_key`]?.trim() || ''
   return {
     slug,
     type,
-    name: settingsMap.data_provider_primary_name?.trim() || defaultProviderName(type, slug),
-    apiKey: keyForSlug(settingsMap, slug, type, envFallback),
+    name: settingsMap[`data_provider_${slug}_name`]?.trim() || defaultProviderName(type, slug),
+    apiKey: slotKey || (type === 'datahub' ? envFallback?.trim() || '' : ''),
   }
+}
+
+function getActiveProvider(settingsMap: Record<string, string>, envFallback?: string | null) {
+  return providerForSlug(settingsMap, parseSlug(settingsMap.active_data_provider) ?? 'primary', envFallback)
+}
+
+function isRerouteEnabled(settingsMap: Record<string, string>) {
+  return settingsMap.provider_auto_reroute_enabled !== 'false'
+}
+
+/** Active provider first, then the configured fallback order. Slots without a key are skipped. */
+function getProviderChain(settingsMap: Record<string, string>, envFallback?: string | null) {
+  const active = parseSlug(settingsMap.active_data_provider) ?? 'primary'
+  if (!isRerouteEnabled(settingsMap)) {
+    const provider = providerForSlug(settingsMap, active, envFallback)
+    return provider.apiKey ? [provider] : []
+  }
+  const configured = (settingsMap.provider_reroute_chain || PROVIDER_SLUGS.join(','))
+    .split(',')
+    .map(parseSlug)
+    .filter((s): s is ProviderSlug => s !== null)
+  const order = [...new Set([active, ...configured])]
+  return order
+    .map((slug) => providerForSlug(settingsMap, slug, envFallback))
+    .filter((p) => p.apiKey)
+}
+
+async function sendJson(
+  url: string,
+  init: { method?: string; headers: Record<string, string>; body?: unknown },
+): Promise<HttpReply> {
+  try {
+    const res = await fetch(url, {
+      method: init.method ?? 'POST',
+      headers: init.headers,
+      body: init.body === undefined ? undefined : JSON.stringify(init.body),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    })
+    const text = await res.text()
+    try {
+      const parsed = JSON.parse(text)
+      return {
+        status: res.status,
+        body: parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : { value: parsed },
+        parsed: true,
+        networkError: null,
+      }
+    } catch {
+      return { status: res.status, body: { raw: text.slice(0, 500) }, parsed: false, networkError: null }
+    }
+  } catch (e) {
+    return { status: null, body: {}, parsed: false, networkError: (e as Error).message || 'Network error' }
+  }
+}
+
+/** Generic HTTP classification when the provider gives no explicit accept/reject signal. */
+function classifyReply(reply: HttpReply, explicitFailure: boolean): Outcome {
+  if (reply.networkError || reply.status === null) return 'uncertain'
+  const s = reply.status
+  if (s === 429) return 'rejected'
+  if (s === 408 || s === 409 || s >= 500) return 'uncertain'
+  if (s >= 400) return 'rejected'
+  if (reply.parsed && explicitFailure) return 'rejected'
+  return 'uncertain'
+}
+
+function replyError(reply: HttpReply, message: unknown, fallback: string) {
+  if (reply.networkError) return `Network error: ${reply.networkError}`
+  const text = message == null || message === '' ? '' : String(message)
+  return text || `${fallback} (HTTP ${reply.status})`
 }
 
 async function datahubPurchase(
   apiKey: string,
   payload: { networkKey: string; recipient: string; capacity: number; reference: string },
 ): Promise<PurchaseResult> {
-  const res = await fetch(`${DATAHUB_BASE}/data-purchase`, {
-    method: 'POST',
-    headers: {
-      'X-API-Key': apiKey,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(payload),
+  const reply = await sendJson(`${DATAHUB_BASE}/data-purchase`, {
+    headers: { 'X-API-Key': apiKey, 'Content-Type': 'application/json' },
+    body: payload,
   })
-  const body = await res.json().catch(() => ({}))
-  const success = Boolean(body?.success)
+  const body = reply.body
+  const data = (body.data ?? {}) as Record<string, unknown>
+  const accepted = reply.parsed && body.success === true && (reply.status ?? 0) < 400
+  const outcome = accepted ? 'accepted' : classifyReply(reply, body.success === false)
   return {
-    success,
-    providerRef: body?.data?.reference ?? body?.reference ?? body?.data?.orderReference ?? null,
-    providerOrderNo:
-      body?.data?.orderNumber ?? body?.orderNumber ?? body?.data?.orderNo ?? null,
-    error: success ? null : String(body?.error ?? body?.message ?? 'Datahub rejected order'),
-    raw: body as Record<string, unknown>,
+    outcome,
+    httpStatus: reply.status,
+    providerRef: String(data.reference ?? body.reference ?? data.orderReference ?? '') || null,
+    providerOrderNo: String(data.orderNumber ?? body.orderNumber ?? data.orderNo ?? '') || null,
+    error: accepted ? null : replyError(reply, body.error ?? body.message, 'Datahub rejected order'),
+    raw: body,
   }
 }
 
@@ -184,83 +259,60 @@ async function skplugPurchase(
   token: string,
   payload: { recipient: string; network: string; gb_size: string },
 ): Promise<PurchaseResult> {
-  const res = await fetch(`${SKPLUG_BASE}/order/`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(payload),
+  const reply = await sendJson(`${SKPLUG_BASE}/order/`, {
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: payload,
   })
-  const body = await res.json().catch(() => ({}))
-  const orderId =
-    body?.order_id ?? body?.orderId ?? body?.data?.order_id ?? body?.id ?? null
-  const status = String(body?.status ?? body?.data?.status ?? '').toLowerCase()
-  const success =
-    res.ok &&
-    Boolean(orderId) &&
-    status !== 'failed' &&
-    !body?.error &&
-    body?.success !== false
-
+  const body = reply.body
+  const data = (body.data ?? {}) as Record<string, unknown>
+  const orderId = body.order_id ?? body.orderId ?? data.order_id ?? body.id ?? null
+  const status = String(body.status ?? data.status ?? '').toLowerCase()
+  const ok2xx = reply.status !== null && reply.status >= 200 && reply.status < 300
+  const accepted = ok2xx && Boolean(orderId) && status !== 'failed' && !body.error && body.success !== false
+  const explicitFailure = status === 'failed' || Boolean(body.error) || body.success === false
+  const outcome = accepted ? 'accepted' : classifyReply(reply, explicitFailure)
   return {
-    success,
+    outcome,
+    httpStatus: reply.status,
     providerRef: orderId ? String(orderId) : null,
     providerOrderNo: orderId ? String(orderId) : null,
-    error: success
+    error: accepted
       ? null
-      : String(body?.error ?? body?.message ?? body?.detail ?? `SK Plug rejected order (${res.status})`),
-    raw: body as Record<string, unknown>,
+      : replyError(reply, body.error ?? body.message ?? body.detail, 'SK Plug rejected order'),
+    raw: body,
   }
 }
 
 async function datamartPurchase(
   apiKey: string,
-  payload: {
-    phoneNumber: string
-    network: string
-    capacity: string
-    gateway: string
-    ref: string
-  },
+  payload: { phoneNumber: string; network: string; capacity: string; gateway: string; ref: string },
 ): Promise<PurchaseResult> {
-  const res = await fetch(`${DATAMART_BASE}/purchase`, {
-    method: 'POST',
-    headers: {
-      'X-API-Key': apiKey,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(payload),
+  const reply = await sendJson(`${DATAMART_BASE}/purchase`, {
+    headers: { 'X-API-Key': apiKey, 'Content-Type': 'application/json' },
+    body: payload,
   })
-  const body = await res.json().catch(() => ({}))
-  const data = (body?.data ?? {}) as Record<string, unknown>
-  const orderRef =
-    data.orderReference ??
-    data.reference ??
-    data.ref ??
-    body?.orderReference ??
-    body?.reference ??
-    null
-  const status = String(data.status ?? body?.status ?? '').toLowerCase()
-  const success =
-    res.ok &&
-    (body?.status === 'success' || body?.success === true) &&
+  const body = reply.body
+  const data = (body.data ?? {}) as Record<string, unknown>
+  const orderRef = data.orderReference ?? data.reference ?? data.ref ?? body.orderReference ?? body.reference ?? null
+  const status = String(data.status ?? '').toLowerCase()
+  const ok2xx = reply.status !== null && reply.status >= 200 && reply.status < 300
+  const accepted =
+    ok2xx &&
+    (body.status === 'success' || body.success === true) &&
     status !== 'failed' &&
     status !== 'error'
-
+  const explicitFailure =
+    body.status === 'error' || body.status === 'failed' || body.success === false || status === 'failed'
+  const outcome = accepted ? 'accepted' : classifyReply(reply, explicitFailure)
   return {
-    success,
+    outcome,
+    httpStatus: reply.status,
     providerRef: orderRef ? String(orderRef) : payload.ref,
     providerOrderNo: orderRef ? String(orderRef) : null,
-    error: success
+    error: accepted
       ? null
-      : String(
-          body?.message ??
-            body?.error ??
-            data.message ??
-            `DataMart rejected order (${res.status})`,
-        ),
-    raw: body as Record<string, unknown>,
+      : replyError(reply, body.message ?? body.error ?? data.message, 'DataMart rejected order'),
+    raw: body,
   }
 }
 
@@ -268,36 +320,38 @@ async function bundlezonePurchase(
   apiKey: string,
   payload: { network: string; recipient: string; capacity: number },
 ): Promise<PurchaseResult> {
-  const res = await fetch(`${BUNDLEZONE_BASE}/order.php`, {
-    method: 'POST',
-    headers: {
-      'x-api-key': apiKey,
-      'Content-Type': 'application/json',
-      Accept: 'application/json',
-    },
-    body: JSON.stringify({ mode: 'single', ...payload }),
+  const reply = await sendJson(`${BUNDLEZONE_BASE}/order.php`, {
+    headers: { 'x-api-key': apiKey, 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: { mode: 'single', ...payload },
   })
-  const body = await res.json().catch(() => ({}))
-  const data = (body?.data ?? {}) as Record<string, unknown>
+  const body = reply.body
+  const data = (body.data ?? {}) as Record<string, unknown>
   const order = (data.order ?? {}) as Record<string, unknown>
   const orderStatus = String(order.status ?? '').toLowerCase()
-  const success =
-    res.ok &&
-    body?.success === true &&
-    order.success !== false &&
-    orderStatus !== 'failed'
+  const code = String(order.code ?? data.code ?? body.code ?? '')
+  const ok2xx = reply.status !== null && reply.status >= 200 && reply.status < 300
+
+  let outcome: Outcome
+  if (ok2xx && body.success === true && order.success !== false && orderStatus !== 'failed') {
+    outcome = 'accepted'
+  } else if (code === 'ORDER_ALREADY_PENDING') {
+    outcome = 'uncertain'
+  } else if (order.order_created === false || BUNDLEZONE_NO_ORDER_CODES.has(code)) {
+    outcome = 'rejected'
+  } else {
+    outcome = classifyReply(reply, body.success === false)
+  }
 
   const reference = order.reference ?? data.reference ?? null
   const orderId = order.order_id ?? order.id ?? data.order_id ?? null
-  const code = String(order.code ?? data.code ?? body?.code ?? '')
-  const message = String(body?.message ?? order.message ?? `BundleZone rejected order (${res.status})`)
-
+  const message = replyError(reply, body.message ?? order.message, 'BundleZone rejected order')
   return {
-    success,
+    outcome,
+    httpStatus: reply.status,
     providerRef: reference ? String(reference) : null,
     providerOrderNo: orderId ? String(orderId) : null,
-    error: success ? null : code ? `${code}: ${message}` : message,
-    raw: body as Record<string, unknown>,
+    error: outcome === 'accepted' ? null : code ? `${code}: ${message}` : message,
+    raw: body,
   }
 }
 
@@ -315,19 +369,17 @@ async function purchaseWithProvider(
   }
 
   if (provider.type === 'skplug') {
-    const network = SKPLUG_NETWORK_MAP[order.network] ?? order.network.toUpperCase()
     return skplugPurchase(provider.apiKey, {
       recipient: order.phone,
-      network,
+      network: SKPLUG_NETWORK_MAP[order.network] ?? order.network.toUpperCase(),
       gb_size: String(Number(order.size_gb)),
     })
   }
 
   if (provider.type === 'datamart') {
-    const network = DATAMART_NETWORK_MAP[order.network] ?? order.network.toUpperCase()
     return datamartPurchase(provider.apiKey, {
       phoneNumber: order.phone,
-      network,
+      network: DATAMART_NETWORK_MAP[order.network] ?? order.network.toUpperCase(),
       capacity: String(Number(order.size_gb)),
       gateway: 'wallet',
       ref: order.reference,
@@ -349,67 +401,87 @@ async function purchaseWithProvider(
 
 async function providerHealth(provider: ActiveProvider) {
   if (provider.type === 'bundlezone') {
-    const res = await fetch(`${BUNDLEZONE_BASE}/balance.php`, {
+    const reply = await sendJson(`${BUNDLEZONE_BASE}/balance.php`, {
+      method: 'GET',
       headers: { 'x-api-key': provider.apiKey, Accept: 'application/json' },
     })
-    const body = await res.json().catch(() => ({}))
-    return { ok: res.ok && body?.success === true, body }
+    return { ok: reply.status === 200 && reply.body.success === true, body: reply.body }
   }
 
   if (provider.type === 'skplug') {
-    const res = await fetch(`${SKPLUG_BASE}/bundles/`, {
+    const reply = await sendJson(`${SKPLUG_BASE}/bundles/`, {
+      method: 'GET',
       headers: { Authorization: `Bearer ${provider.apiKey}` },
     })
-    const body = await res.json().catch(() => ({}))
-    return { ok: res.ok, body }
+    return { ok: reply.status === 200, body: reply.body }
   }
 
   if (provider.type === 'datamart') {
-    const res = await fetch(`${DATAMART_BASE}/balance`, {
+    const reply = await sendJson(`${DATAMART_BASE}/balance`, {
+      method: 'GET',
       headers: { 'X-API-Key': provider.apiKey },
     })
-    const body = await res.json().catch(() => ({}))
-    return { ok: res.ok && body?.status === 'success', body }
+    return { ok: reply.status === 200 && reply.body.status === 'success', body: reply.body }
   }
 
-  const res = await fetch(`${DATAHUB_BASE}/balance`, {
+  const reply = await sendJson(`${DATAHUB_BASE}/balance`, {
+    method: 'GET',
     headers: { 'X-API-Key': provider.apiKey },
   })
-  const body = await res.json().catch(() => ({}))
-  return { ok: res.ok, body }
+  return { ok: reply.status === 200, body: reply.body }
 }
 
 /**
- * Atomically claim an order before calling the provider.
+ * Atomically claim an order before calling any provider.
  * Prevents duplicate purchases when /order/{id} and /process race.
  */
-async function claimOrderForProvider(
-  supabase: ReturnType<typeof createClient>,
-  orderId: string,
-  provider: ActiveProvider,
-) {
-  const claimedAt = new Date().toISOString()
+async function claimOrder(supabase: ReturnType<typeof createClient>, orderId: string) {
   const { data, error } = await supabase
     .from('orders')
     .update({
-      provider_submitted_at: claimedAt,
+      provider_submitted_at: new Date().toISOString(),
       provider_status: 'submitting',
-      provider_name: provider.name,
-      provider_type: provider.type,
       provider_error: null,
     })
     .eq('id', orderId)
     .is('provider_submitted_at', null)
-    .select('id, reference, phone, network, size_gb, status, provider_submitted_at')
+    .select(ORDER_CLAIM_COLUMNS)
     .maybeSingle()
 
   if (error) throw error
   return data as OrderRow | null
 }
 
+/** Record the attempt before calling the provider; the unique key blocks a second send to the same slot. */
+async function openAttempt(
+  supabase: ReturnType<typeof createClient>,
+  order: OrderRow,
+  round: number,
+  attemptNo: number,
+  provider: ActiveProvider,
+) {
+  const { data, error } = await supabase
+    .from('order_provider_attempts')
+    .upsert(
+      {
+        order_id: order.id,
+        route_round: round,
+        attempt_no: attemptNo,
+        provider_slot: provider.slug,
+        provider_type: provider.type,
+        provider_name: provider.name,
+        outcome: 'submitting',
+      },
+      { onConflict: 'order_id,route_round,provider_slot', ignoreDuplicates: true },
+    )
+    .select('id')
+  if (error) throw error
+  return (data?.[0]?.id as string | undefined) ?? null
+}
+
 async function fulfillOrder(
   supabase: ReturnType<typeof createClient>,
-  provider: ActiveProvider,
+  chain: ActiveProvider[],
   order: OrderRow,
   mtnNetworkKey: string,
 ) {
@@ -417,53 +489,148 @@ async function fulfillOrder(
     return { order_id: order.id, skipped: true, reason: 'Already submitted' }
   }
 
-  const claimed = await claimOrderForProvider(supabase, order.id, provider)
+  const claimed = await claimOrder(supabase, order.id)
   if (!claimed) {
     return { order_id: order.id, skipped: true, reason: 'Already claimed by another worker' }
   }
 
-  if (!provider.apiKey) {
-    const update = {
-      provider_status: 'failed',
-      provider_name: provider.name,
-      provider_type: provider.type,
-      provider_error: `No API credential configured for ${provider.slug} provider`,
+  const round = claimed.provider_route_round ?? 0
+  const { data: priorRows, error: priorError } = await supabase
+    .from('order_provider_attempts')
+    .select('provider_slot, provider_name, attempt_no, outcome, error')
+    .eq('order_id', claimed.id)
+    .eq('route_round', round)
+    .order('attempt_no', { ascending: true })
+  if (priorError) throw priorError
+
+  const prior = (priorRows as AttemptRow[]) ?? []
+  const tried = new Set(prior.map((a) => a.provider_slot))
+  const failures = prior
+    .filter((a) => a.outcome === 'rejected' || a.outcome === 'failed_later')
+    .map((a) => `${a.provider_name}: ${a.error ?? a.outcome}`)
+  let attemptNo = prior.reduce((max, a) => Math.max(max, a.attempt_no), claimed.provider_attempts ?? 0)
+  const attempts: Array<Record<string, unknown>> = []
+
+  for (const provider of chain.filter((p) => !tried.has(p.slug))) {
+    attemptNo += 1
+    const attemptId = await openAttempt(supabase, claimed, round, attemptNo, provider)
+    if (!attemptId) {
+      attemptNo -= 1
+      continue
     }
-    await supabase.from('orders').update(update).eq('id', order.id)
-    return {
-      order_id: order.id,
-      reference: claimed.reference,
-      success: false,
-      provider_status: update.provider_status,
-      provider_name: provider.name,
-      provider_type: provider.type,
-      error: update.provider_error,
+
+    await supabase
+      .from('orders')
+      .update({
+        provider_status: 'submitting',
+        provider_name: provider.name,
+        provider_type: provider.type,
+        provider_attempt_id: attemptId,
+        provider_attempts: attemptNo,
+        provider_error: null,
+      })
+      .eq('id', claimed.id)
+
+    let result: PurchaseResult
+    try {
+      result = await purchaseWithProvider(provider, claimed, mtnNetworkKey)
+    } catch (e) {
+      result = {
+        outcome: 'uncertain',
+        httpStatus: null,
+        providerRef: null,
+        providerOrderNo: null,
+        error: (e as Error).message || 'Unexpected error while calling provider',
+        raw: {},
+      }
     }
+
+    await supabase
+      .from('order_provider_attempts')
+      .update({
+        outcome: result.outcome,
+        http_status: result.httpStatus,
+        provider_reference: result.providerRef,
+        provider_order_number: result.providerOrderNo,
+        error: result.error,
+        finished_at: new Date().toISOString(),
+      })
+      .eq('id', attemptId)
+
+    attempts.push({ provider: provider.name, slot: provider.slug, outcome: result.outcome, error: result.error })
+
+    if (result.outcome === 'accepted') {
+      await supabase
+        .from('orders')
+        .update({
+          provider_status: 'submitted',
+          provider_reference: result.providerRef,
+          provider_order_number: result.providerOrderNo,
+          provider_error: null,
+          status: claimed.status === 'pending' ? 'processing' : claimed.status,
+        })
+        .eq('id', claimed.id)
+      return {
+        order_id: claimed.id,
+        reference: claimed.reference,
+        success: true,
+        provider_status: 'submitted',
+        provider_name: provider.name,
+        provider_type: provider.type,
+        provider_reference: result.providerRef,
+        rerouted: attemptNo > 1,
+        attempts,
+      }
+    }
+
+    if (result.outcome === 'uncertain') {
+      const error = `Unclear response from ${provider.name} — not re-routed to avoid a duplicate. Check ${provider.name} before retrying. ${result.error ?? ''}`.trim()
+      await supabase
+        .from('orders')
+        .update({
+          provider_status: 'uncertain',
+          provider_reference: result.providerRef,
+          provider_order_number: result.providerOrderNo,
+          provider_error: error,
+        })
+        .eq('id', claimed.id)
+      return {
+        order_id: claimed.id,
+        reference: claimed.reference,
+        success: false,
+        provider_status: 'uncertain',
+        provider_name: provider.name,
+        provider_type: provider.type,
+        error,
+        attempts,
+      }
+    }
+
+    failures.push(`${provider.name}: ${result.error ?? 'rejected'}`)
   }
 
-  const result = await purchaseWithProvider(provider, claimed, mtnNetworkKey)
-
-  const update = {
-    provider_status: result.success ? 'submitted' : 'failed',
-    provider_name: provider.name,
-    provider_type: provider.type,
-    provider_reference: result.providerRef,
-    provider_order_number: result.providerOrderNo,
-    provider_error: result.error,
-    status: result.success && claimed.status === 'pending' ? 'processing' : claimed.status,
+  const hadLateFailure = prior.some((a) => a.outcome === 'failed_later')
+  const error =
+    failures.length > 1
+      ? `All providers rejected — ${failures.join(' | ')}`
+      : failures[0] ?? 'No provider with an API credential is available'
+  const update: Record<string, unknown> = {
+    provider_status: 'failed',
+    provider_error: error,
   }
-
-  await supabase.from('orders').update(update).eq('id', order.id)
+  if (hadLateFailure) {
+    update.status = 'failed'
+    update.failure_reason = error
+  }
+  await supabase.from('orders').update(update).eq('id', claimed.id)
 
   return {
-    order_id: order.id,
+    order_id: claimed.id,
     reference: claimed.reference,
-    success: result.success,
-    provider_status: update.provider_status,
-    provider_name: provider.name,
-    provider_type: provider.type,
-    error: result.error,
-    provider_reference: result.providerRef,
+    success: false,
+    provider_status: 'failed',
+    error,
+    attempts,
   }
 }
 
@@ -484,21 +651,22 @@ Deno.serve(async (req) => {
   const idx = path.indexOf('/fulfill-orders')
   if (idx >= 0) path = path.slice(idx + '/fulfill-orders'.length) || '/'
 
+  const loadSettings = async () => {
+    const { data: settings } = await supabase.from('site_settings').select('key, value')
+    return Object.fromEntries((settings ?? []).map((s) => [s.key, s.value])) as Record<string, string>
+  }
+
   try {
     if (req.method === 'POST' && path === '/process') {
-      const { data: settings } = await supabase.from('site_settings').select('key, value')
-      const settingsMap = Object.fromEntries((settings ?? []).map((s) => [s.key, s.value]))
+      const settingsMap = await loadSettings()
 
       if (settingsMap.provider_fulfillment_enabled === 'false') {
         return json({ success: true, processed: 0, message: 'Provider fulfillment disabled' })
       }
 
-      const provider = getActiveProvider(settingsMap, envFallback)
-      if (!provider.apiKey) {
-        return json({
-          success: false,
-          error: `No API credential configured for active ${provider.slug} provider`,
-        }, 500)
+      const chain = getProviderChain(settingsMap, envFallback)
+      if (chain.length === 0) {
+        return json({ success: false, error: 'No provider slot has an API credential configured' }, 500)
       }
 
       const mtnKey = settingsMap.provider_mtn_network_key || 'YELLO'
@@ -514,14 +682,16 @@ Deno.serve(async (req) => {
 
       const results = []
       for (const order of (orders as OrderRow[]) ?? []) {
-        results.push(await fulfillOrder(supabase, provider, order, mtnKey))
+        results.push(await fulfillOrder(supabase, chain, order, mtnKey))
       }
 
       return json({
         success: true,
-        active_provider: provider.slug,
-        provider_name: provider.name,
-        provider_type: provider.type,
+        active_provider: chain[0].slug,
+        provider_name: chain[0].name,
+        provider_type: chain[0].type,
+        reroute_enabled: isRerouteEnabled(settingsMap),
+        chain: chain.map((p) => p.slug),
         processed: results.length,
         succeeded: results.filter((r) => r.success).length,
         failed: results.filter((r) => r.success === false).length,
@@ -535,22 +705,17 @@ Deno.serve(async (req) => {
         return json({ success: false, error: 'Order id required' }, 400)
       }
 
-      const { data: settings } = await supabase.from('site_settings').select('key, value')
-      const settingsMap = Object.fromEntries((settings ?? []).map((s) => [s.key, s.value]))
-      const provider = getActiveProvider(settingsMap, envFallback)
-
-      if (!provider.apiKey) {
-        return json({
-          success: false,
-          error: `No API credential configured for active ${provider.slug} provider`,
-        }, 500)
+      const settingsMap = await loadSettings()
+      const chain = getProviderChain(settingsMap, envFallback)
+      if (chain.length === 0) {
+        return json({ success: false, error: 'No provider slot has an API credential configured' }, 500)
       }
 
       const mtnKey = settingsMap.provider_mtn_network_key || 'YELLO'
 
       const { data: order, error } = await supabase
         .from('orders')
-        .select('id, reference, phone, network, size_gb, status, provider_submitted_at')
+        .select(ORDER_CLAIM_COLUMNS)
         .eq('id', orderId)
         .maybeSingle()
 
@@ -558,25 +723,28 @@ Deno.serve(async (req) => {
         return json({ success: false, error: 'Order not found' }, 404)
       }
 
-      const result = await fulfillOrder(supabase, provider, order as OrderRow, mtnKey)
+      const result = await fulfillOrder(supabase, chain, order as OrderRow, mtnKey)
       return json({
         success: true,
-        active_provider: provider.slug,
-        provider_name: provider.name,
-        provider_type: provider.type,
+        active_provider: chain[0].slug,
+        provider_name: chain[0].name,
+        provider_type: chain[0].type,
+        chain: chain.map((p) => p.slug),
         result,
       })
     }
 
     if (req.method === 'GET' && path === '/health') {
-      const { data: settings } = await supabase.from('site_settings').select('key, value')
-      const settingsMap = Object.fromEntries((settings ?? []).map((s) => [s.key, s.value]))
-      const provider = getActiveProvider(settingsMap, envFallback)
+      const settingsMap = await loadSettings()
+      const slot = parseSlug(url.searchParams.get('slot'))
+      const provider = slot
+        ? providerForSlug(settingsMap, slot, envFallback)
+        : getActiveProvider(settingsMap, envFallback)
 
       if (!provider.apiKey) {
         return json({
           success: false,
-          error: `No API credential configured for active ${provider.slug} provider`,
+          error: `No API credential configured for ${provider.slug} provider`,
         }, 500)
       }
 
@@ -593,9 +761,10 @@ Deno.serve(async (req) => {
     return json({
       success: true,
       endpoints: {
-        'POST /process': 'Submit pending orders to the active provider (Datahub, SK Plug, DataMart, or BundleZone; primary/secondary/tertiary/quaternary)',
-        'POST /order/{id}': 'Submit one order to the active provider',
-        'GET /health': 'Check active provider connection',
+        'POST /process':
+          'Submit pending orders to the active provider, auto re-routing definite rejections to the next provider slot',
+        'POST /order/{id}': 'Submit one order (same re-routing rules)',
+        'GET /health?slot=': 'Check the active provider, or a specific slot (primary/secondary/tertiary/quaternary)',
       },
     })
   } catch (e) {

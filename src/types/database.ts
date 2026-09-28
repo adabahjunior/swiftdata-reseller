@@ -64,6 +64,8 @@ export interface Order {
   provider_submitted_at: string | null
   provider_name: string | null
   provider_type: string | null
+  provider_attempts?: number
+  provider_route_round?: number
   service_type?: 'data' | 'airtime' | 'ecg' | 'tv'
   utility_product_id?: string | null
   face_amount?: number | null
@@ -132,6 +134,23 @@ export interface OrderExportDownload {
   download_count: number
   file_label: string
   created_at: string
+}
+
+export interface OrderProviderAttempt {
+  id: string
+  order_id: string
+  route_round: number
+  attempt_no: number
+  provider_slot: string
+  provider_type: string
+  provider_name: string
+  outcome: 'submitting' | 'accepted' | 'rejected' | 'uncertain' | 'failed_later'
+  http_status: number | null
+  provider_reference: string | null
+  provider_order_number: string | null
+  error: string | null
+  created_at: string
+  finished_at: string | null
 }
 
 export interface NumberVerification {
