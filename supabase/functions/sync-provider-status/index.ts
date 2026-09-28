@@ -170,10 +170,10 @@ function resolveProviderType(order: OrderRow): ProviderType {
   return 'datahub'
 }
 
-function credentialForType(
+function credentialsForType(
   settingsMap: Record<string, string>,
   type: ProviderType,
-) {
+): string[] {
   const slots: Array<{ type: string; key: string }> = [
     {
       type: (settingsMap.data_provider_primary_type || 'datahub').trim().toLowerCase(),
@@ -192,13 +192,13 @@ function credentialForType(
       key: settingsMap.data_provider_quaternary_api_key?.trim() || '',
     },
   ]
-  const match = slots.find((s) => s.type === type && s.key)
-  if (match?.key) return match.key
-
-  if (type === 'datamart') return settingsMap.datamart_api_key?.trim() || ''
-  if (type === 'datahub') return Deno.env.get('DATAHUB_API_KEY')?.trim() || ''
-  if (type === 'bundlezone') return ''
-  return slots.map((s) => s.key).find(Boolean) || ''
+  const keys = slots.filter((s) => s.type === type && s.key).map((s) => s.key)
+  if (type === 'datamart') keys.push(settingsMap.datamart_api_key?.trim() || '')
+  if (type === 'datahub') keys.push(Deno.env.get('DATAHUB_API_KEY')?.trim() || '')
+  if (keys.filter(Boolean).length === 0 && type !== 'bundlezone') {
+    keys.push(...slots.map((s) => s.key))
+  }
+  return [...new Set(keys.filter(Boolean))]
 }
 
 function hexFromBuffer(buf: ArrayBuffer) {
@@ -490,12 +490,13 @@ async function applyProviderStatus(
   return { provider_status: mapped.providerStatus, order_status: update.status ?? order.status }
 }
 
-async function credentialForOrder(
+async function credentialsForOrder(
   supabase: ReturnType<typeof createClient>,
   order: OrderRow,
   settingsMap: Record<string, string>,
   providerType: ProviderType,
 ) {
+  const keys: string[] = []
   if (order.provider_attempt_id) {
     const { data } = await supabase
       .from('order_provider_attempts')
@@ -503,9 +504,10 @@ async function credentialForOrder(
       .eq('id', order.provider_attempt_id)
       .maybeSingle()
     const key = data?.provider_slot ? slotCredential(settingsMap, String(data.provider_slot)) : ''
-    if (key) return key
+    if (key) keys.push(key)
   }
-  return credentialForType(settingsMap, providerType)
+  keys.push(...credentialsForType(settingsMap, providerType))
+  return [...new Set(keys)]
 }
 
 async function syncOrderStatus(
@@ -514,39 +516,30 @@ async function syncOrderStatus(
   settingsMap: Record<string, string>,
 ) {
   const providerType = resolveProviderType(order)
-  const credential = await credentialForOrder(supabase, order, settingsMap, providerType)
-  let result: { ok: boolean; status: string | null; body: unknown }
+  const credentials = await credentialsForOrder(supabase, order, settingsMap, providerType)
+  if (credentials.length === 0) {
+    const label = { bundlezone: 'BundleZone API key', skplug: 'SK Plug token', datamart: 'DataMart API key', datahub: 'Datahub key' }
+    return { order_id: order.id, skipped: true, reason: `No ${label[providerType]}` }
+  }
 
-  if (providerType === 'bundlezone') {
-    if (!credential) {
-      return { order_id: order.id, skipped: true, reason: 'No BundleZone API key' }
+  let result: { ok: boolean; status: string | null; body: unknown } = { ok: false, status: null, body: {} }
+  for (const credential of credentials) {
+    if (providerType === 'bundlezone') {
+      result = await fetchBundlezoneStatus(credential, order.provider_reference, order.provider_order_number)
+    } else if (providerType === 'skplug') {
+      const orderId = order.provider_order_number ?? order.provider_reference ?? order.reference
+      result = await fetchSkplugStatus(credential, orderId)
+    } else if (providerType === 'datamart') {
+      const ref = order.provider_reference ?? order.provider_order_number ?? order.reference
+      result = await fetchDatamartStatus(credential, ref)
+    } else {
+      result = await fetchDatahubStatus(
+        credential,
+        order.provider_reference ?? order.reference,
+        order.provider_order_number,
+      )
     }
-    result = await fetchBundlezoneStatus(
-      credential,
-      order.provider_reference,
-      order.provider_order_number,
-    )
-  } else if (providerType === 'skplug') {
-    const orderId = order.provider_order_number ?? order.provider_reference ?? order.reference
-    if (!credential) {
-      return { order_id: order.id, skipped: true, reason: 'No SK Plug token' }
-    }
-    result = await fetchSkplugStatus(credential, orderId)
-  } else if (providerType === 'datamart') {
-    const ref = order.provider_reference ?? order.provider_order_number ?? order.reference
-    if (!credential) {
-      return { order_id: order.id, skipped: true, reason: 'No DataMart API key' }
-    }
-    result = await fetchDatamartStatus(credential, ref)
-  } else {
-    if (!credential) {
-      return { order_id: order.id, skipped: true, reason: 'No Datahub key' }
-    }
-    result = await fetchDatahubStatus(
-      credential,
-      order.provider_reference ?? order.reference,
-      order.provider_order_number,
-    )
+    if (result.ok && result.status) break
   }
 
   if (!result.ok || !result.status) {
