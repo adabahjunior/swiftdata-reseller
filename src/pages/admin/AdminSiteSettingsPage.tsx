@@ -6,6 +6,7 @@ import { useSiteSettings } from '../../hooks/useAdminData'
 import {
   bundlezoneWebhookUrl,
   providerWebhookUrl,
+  spendlessWebhookUrl,
   verificationWebhookUrl,
 } from '../../lib/providerStatusSync'
 import { supabase } from '../../lib/supabase'
@@ -15,6 +16,7 @@ const PROVIDER_TYPES = [
   { id: 'skplug', label: 'SK Plug', hint: 'skdataplug.com/api/v1 · Bearer token', defaultName: 'SK Plug' },
   { id: 'datamart', label: 'DataMart GH', hint: 'api.datamartgh.shop/api/developer · X-API-Key', defaultName: 'DataMart GH' },
   { id: 'bundlezone', label: 'BundleZone', hint: 'bundlezone.shop/api · x-api-key', defaultName: 'BundleZone' },
+  { id: 'spendless', label: 'Spendless', hint: 'spendless.top/api · X-API-Key', defaultName: 'Spendless' },
 ] as const
 
 function providerTypeLabel(type: string) {
@@ -30,9 +32,10 @@ const PROVIDER_SLOTS = [
   { slug: 'secondary', title: 'Secondary', defaultType: 'skplug', defaultName: 'SK Plug' },
   { slug: 'tertiary', title: 'Tertiary', defaultType: 'datahub', defaultName: 'Datahub' },
   { slug: 'quaternary', title: 'Quaternary', defaultType: 'bundlezone', defaultName: 'BundleZone' },
+  { slug: 'quinary', title: 'Quinary', defaultType: 'spendless', defaultName: 'Spendless' },
 ] as const
 
-const PROVIDER_TYPE_LIST = 'datahub, skplug, datamart, or bundlezone'
+const PROVIDER_TYPE_LIST = 'datahub, skplug, datamart, bundlezone, or spendless'
 
 const PROVIDER_SETTING_KEYS = new Set([
   'active_data_provider',
@@ -45,8 +48,12 @@ const PROVIDER_SETTING_KEYS = new Set([
   'datamart_name',
   'datahub_webhook_secret',
   'bundlezone_webhook_secret',
+  'spendless_webhook_secret',
   'provider_auto_reroute_enabled',
   'provider_reroute_chain',
+  'skplug_refund_reroute_enabled',
+  'provider_refund_reroute_max_age_hours',
+  'skplug_refund_sync_last_at',
 ])
 
 const DEFAULT_REROUTE_CHAIN = PROVIDER_SLOTS.map((s) => s.slug).join(',')
@@ -127,7 +134,7 @@ export default function AdminSiteSettingsPage() {
     setMessage(null)
 
     const providerUpdates: Array<[string, string, string]> = [
-      ['active_data_provider', getValue('active_data_provider', 'primary'), 'Active data provider (primary, secondary, tertiary, or quaternary)'],
+      ['active_data_provider', getValue('active_data_provider', 'primary'), 'Active data provider (primary, secondary, tertiary, quaternary, or quinary)'],
       ...PROVIDER_SLOTS.flatMap(({ slug, title, defaultType, defaultName }): Array<[string, string, string]> => [
         [`data_provider_${slug}_type`, getValue(`data_provider_${slug}_type`, defaultType), `${title} provider API type (${PROVIDER_TYPE_LIST})`],
         [`data_provider_${slug}_name`, getValue(`data_provider_${slug}_name`, defaultName), `Display name for ${slug} provider`],
@@ -137,8 +144,15 @@ export default function AdminSiteSettingsPage() {
       ['datamart_name', getValue('datamart_name', 'DataMart GH'), 'DataMart display name'],
       ['datahub_webhook_secret', getValue('datahub_webhook_secret'), 'Datahub HMAC secret for X-Webhook-Signature'],
       ['bundlezone_webhook_secret', getValue('bundlezone_webhook_secret'), 'BundleZone webhook secret for X-BundleZone-Signature'],
+      ['spendless_webhook_secret', getValue('spendless_webhook_secret'), 'Spendless webhook secret for X-Webhook-Signature'],
       ['provider_auto_reroute_enabled', getValue('provider_auto_reroute_enabled', 'true'), 'Automatically re-send rejected orders to the next provider'],
       ['provider_reroute_chain', getValue('provider_reroute_chain', DEFAULT_REROUTE_CHAIN), 'Fallback order of provider slots for auto re-routing'],
+      ['skplug_refund_reroute_enabled', getValue('skplug_refund_reroute_enabled', 'true'), 'Re-route SK Plug refunded orders to the next provider'],
+      [
+        'provider_refund_reroute_max_age_hours',
+        String(Math.max(1, Number(getValue('provider_refund_reroute_max_age_hours', '48')) || 48)),
+        'Only re-route refunds of orders placed within this many hours',
+      ],
     ]
 
     for (const [key, value, label] of providerUpdates) {
@@ -289,6 +303,7 @@ export default function AdminSiteSettingsPage() {
     hasKey: Boolean(getValue(`data_provider_${slot.slug}_api_key`).trim()),
   }))
   const rerouteEnabled = getValue('provider_auto_reroute_enabled', 'true') !== 'false'
+  const refundRerouteEnabled = getValue('skplug_refund_reroute_enabled', 'true') !== 'false'
   const rerouteChain = getValue('provider_reroute_chain', DEFAULT_REROUTE_CHAIN)
     .split(',')
     .map((s) => s.trim())
@@ -334,7 +349,7 @@ export default function AdminSiteSettingsPage() {
 
       <Panel
         title="Data Providers"
-        description="Choose Datahub, SK Plug, DataMart GH, or BundleZone for each slot. The active slot receives all new data orders."
+        description="Choose Datahub, SK Plug, DataMart GH, BundleZone, or Spendless for each slot. The active slot receives all new data orders."
       >
         {loading ? (
           <p className="text-sm text-muted-foreground">Loading provider settings…</p>
@@ -345,7 +360,7 @@ export default function AdminSiteSettingsPage() {
               <p className="text-[11px] text-muted-foreground mb-2">
                 All new order submissions go to the selected provider.
               </p>
-              <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+              <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
                 {slots.map(({ slug, name, type }) => {
                   const selected = activeProvider === slug
                   return (
@@ -511,6 +526,45 @@ export default function AdminSiteSettingsPage() {
                   )
                 })}
               </div>
+
+              <div
+                className={`flex items-start justify-between gap-4 flex-wrap border-t border-white/10 pt-4 ${
+                  rerouteEnabled ? '' : 'opacity-50 pointer-events-none'
+                }`}
+              >
+                <div className="max-w-xl">
+                  <p className="text-sm font-medium">Re-route SK Plug refunds</p>
+                  <p className="text-[11px] text-muted-foreground mt-1">
+                    SK Plug orders that come back refunded (not delivered) are sent to the next provider, even after
+                    the order shows as delivered. Checked through SK Plug orders-summary every 2 minutes. Orders
+                    already marked failed are never re-sent.
+                  </p>
+                  <label className="text-[11px] text-muted-foreground mt-2 flex items-center gap-2">
+                    Only refunds of orders placed in the last
+                    <input
+                      type="number"
+                      min={1}
+                      value={getValue('provider_refund_reroute_max_age_hours', '48')}
+                      onChange={(e) => setDraft({ ...draft, provider_refund_reroute_max_age_hours: e.target.value })}
+                      className="h-7 w-16 rounded border border-white/10 bg-secondary/40 px-2 text-xs"
+                    />
+                    hours
+                  </label>
+                </div>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setDraft({ ...draft, skplug_refund_reroute_enabled: refundRerouteEnabled ? 'false' : 'true' })
+                  }
+                  className={`h-9 px-4 rounded-lg border text-xs font-bold shrink-0 ${
+                    refundRerouteEnabled
+                      ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-400'
+                      : 'border-white/10 bg-secondary/40 text-muted-foreground'
+                  }`}
+                >
+                  {refundRerouteEnabled ? 'Enabled' : 'Disabled'}
+                </button>
+              </div>
             </div>
 
             <div className="rounded-xl border border-white/10 p-4 space-y-3 max-w-xl">
@@ -566,6 +620,37 @@ export default function AdminSiteSettingsPage() {
                   value={getValue('bundlezone_webhook_secret')}
                   onChange={(e) => setDraft({ ...draft, bundlezone_webhook_secret: e.target.value })}
                   placeholder="Same secret as on your BundleZone API client"
+                  className="mt-1 border-white/10 pl-3"
+                />
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-white/10 p-4 space-y-3 max-w-xl">
+              <h3 className="text-sm font-semibold">Spendless webhook</h3>
+              <p className="text-[11px] text-muted-foreground">
+                This URL is sent with every Spendless order automatically. If you set an Order Delivery Webhook URL on
+                your Spendless dashboard it overrides ours, so either leave it blank or paste this URL there. Every
+                callback is confirmed against <span className="font-mono">GET /api/transactions</span> before an order
+                changes, and orders are also polled from there.
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <code className="flex-1 min-w-0 text-xs font-mono bg-black/40 border border-white/10 rounded-xl p-3 break-all">
+                  {spendlessWebhookUrl()}
+                </code>
+                <button
+                  type="button"
+                  onClick={() => void navigator.clipboard.writeText(spendlessWebhookUrl())}
+                  className="h-10 px-4 rounded-lg border border-white/10 text-sm font-bold hover:bg-white/5 shrink-0"
+                >
+                  Copy URL
+                </button>
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground">Spendless webhook secret (optional)</label>
+                <PasswordInput
+                  value={getValue('spendless_webhook_secret')}
+                  onChange={(e) => setDraft({ ...draft, spendless_webhook_secret: e.target.value })}
+                  placeholder="HMAC secret used for X-Webhook-Signature"
                   className="mt-1 border-white/10 pl-3"
                 />
               </div>
@@ -696,13 +781,15 @@ export default function AdminSiteSettingsPage() {
             ['provider_fulfillment_enabled', 'Forward successful orders to the active provider'],
             ['provider_status_sync_enabled', 'Poll provider APIs for live order status updates'],
             ['provider_mtn_network_key', 'Datahub MTN network key (YELLO or MTN_XPRESS)'],
-            ['active_data_provider', 'Active provider slot (primary, secondary, tertiary, or quaternary)'],
+            ['active_data_provider', 'Active provider slot (primary, secondary, tertiary, quaternary, or quinary)'],
             ['data_provider_primary_api_key', 'Primary provider API key (admin only)'],
             ['data_provider_secondary_api_key', 'Secondary provider API key/token (admin only)'],
             ['data_provider_tertiary_api_key', 'Tertiary provider API key (admin only)'],
             ['data_provider_quaternary_api_key', 'Quaternary provider API key, BundleZone by default (admin only)'],
             ['datahub_webhook_secret', 'Datahub HMAC webhook secret'],
             ['bundlezone_webhook_secret', 'BundleZone webhook signing secret'],
+            ['data_provider_quinary_api_key', 'Quinary provider API key, Spendless by default (admin only)'],
+            ['spendless_webhook_secret', 'Spendless webhook signing secret (optional)'],
             ['min_topup_amount', 'Minimum wallet top-up in GHS'],
             ['sms_enabled', 'Send SMS via TXTConnect (credit, failed orders, low balance)'],
             ['sms_api_key', 'TXTConnect API key'],

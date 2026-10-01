@@ -20,6 +20,14 @@ function bucketLabel(status: string) {
   return status.replace(/_/g, ' ')
 }
 
+function reroutedLabel(local: NonNullable<SkplugRefundOrder['local_order']>) {
+  if (local.provider_status === 'rerouting') return 'Re-routing to another provider…'
+  if (local.provider_type && local.provider_type !== 'skplug') {
+    return `Re-routed to ${local.provider_name || local.provider_type}`
+  }
+  return null
+}
+
 function OrderRows({
   orders,
   isAdmin,
@@ -116,6 +124,9 @@ function OrderRows({
                   <div>
                     <p className="font-mono text-xs">{order.local_order.reference}</p>
                     <StatusBadge status={order.local_order.status} />
+                    {reroutedLabel(order.local_order) && (
+                      <p className="text-[11px] text-amber-400 mt-1">{reroutedLabel(order.local_order)}</p>
+                    )}
                     {order.local_order.provider_error && (
                       <p className="text-[11px] text-red-400 mt-1 max-w-[220px]">
                         {order.local_order.provider_error}

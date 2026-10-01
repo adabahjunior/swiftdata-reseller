@@ -12,16 +12,22 @@ const SKPLUG_BASE = 'https://skdataplug.com/api/v1'
 const DATAMART_BASE = 'https://api.datamartgh.shop/api/developer'
 const BUNDLEZONE_BASE = 'https://bundlezone.shop/api'
 const BUNDLEZONE_WEBHOOK_MAX_AGE_SECONDS = 300
+const SPENDLESS_BASE = 'https://spendless.top/api'
+const SPENDLESS_PAGE_SIZE = 100
+const SPENDLESS_MAX_PAGES = 10
+const SPENDLESS_CACHE_MS = 10_000
+const SKPLUG_REFUND_SYNC_INTERVAL_MS = 120_000
 
-type ProviderType = 'datahub' | 'skplug' | 'datamart' | 'bundlezone'
+type ProviderType = 'datahub' | 'skplug' | 'datamart' | 'bundlezone' | 'spendless'
 
-const PROVIDER_SLUGS = ['primary', 'secondary', 'tertiary', 'quaternary'] as const
+const PROVIDER_SLUGS = ['primary', 'secondary', 'tertiary', 'quaternary', 'quinary'] as const
 
 const SLOT_DEFAULT_TYPE: Record<string, ProviderType> = {
   primary: 'datahub',
   secondary: 'skplug',
   tertiary: 'datahub',
   quaternary: 'bundlezone',
+  quinary: 'spendless',
 }
 
 type OrderRow = {
@@ -35,6 +41,9 @@ type OrderRow = {
   provider_name: string | null
   provider_attempt_id?: string | null
   provider_route_round?: number | null
+  provider_submitted_at?: string | null
+  provider_attempts?: number | null
+  created_at?: string
 }
 
 function json(data: unknown, status = 200) {
@@ -52,12 +61,15 @@ function mapProviderStatus(raw: string): { providerStatus: string; orderStatus: 
   if (['failed', 'failure', 'error', 'cancelled', 'canceled'].includes(s)) {
     return { providerStatus: 'failed', orderStatus: 'failed' }
   }
-  if (['processing', 'in_progress', 'in-progress', 'pending', 'submitted', 'waiting', 'initiated'].includes(s)) {
+  if (['refunded', 'reversed'].includes(s)) {
+    return { providerStatus: 'refunded', orderStatus: 'failed' }
+  }
+  if (['processing', 'in_progress', 'in-progress', 'pending', 'submitted', 'placed', 'waiting', 'initiated'].includes(s)) {
     return {
       providerStatus:
         s === 'pending'
           ? 'pending'
-          : s === 'submitted'
+          : s === 'submitted' || s === 'placed'
             ? 'submitted'
             : s === 'waiting'
               ? 'waiting'
@@ -68,6 +80,12 @@ function mapProviderStatus(raw: string): { providerStatus: string; orderStatus: 
     }
   }
   return { providerStatus: raw, orderStatus: null }
+}
+
+/** Provider confirmed the order will not be delivered (failed or refunded), so it is safe to re-route. */
+function isProviderFailure(raw: string) {
+  const mapped = mapProviderStatus(raw).providerStatus
+  return mapped === 'failed' || mapped === 'refunded'
 }
 
 async function fetchDatahubStatus(apiKey: string, reference: string | null, orderNumber: string | null) {
@@ -154,16 +172,66 @@ async function fetchBundlezoneStatus(apiKey: string, reference: string | null, o
   return { ok: false, status: null, body: lastBody ?? { error: 'Status not found' } }
 }
 
+type SpendlessTx = Record<string, unknown>
+const spendlessPageCache = new Map<string, { at: number; pages: SpendlessTx[][] }>()
+
+async function spendlessTransactionsPage(apiKey: string, page: number): Promise<SpendlessTx[] | null> {
+  let entry = spendlessPageCache.get(apiKey)
+  if (!entry || Date.now() - entry.at > SPENDLESS_CACHE_MS) {
+    entry = { at: Date.now(), pages: [] }
+    spendlessPageCache.set(apiKey, entry)
+  }
+  if (entry.pages[page - 1]) return entry.pages[page - 1]
+
+  const res = await fetch(`${SPENDLESS_BASE}/transactions?limit=${SPENDLESS_PAGE_SIZE}&page=${page}`, {
+    headers: { 'X-API-Key': apiKey, Accept: 'application/json' },
+  })
+  const body = (await res.json().catch(() => ({}))) as Record<string, unknown>
+  const data = (body.data ?? {}) as Record<string, unknown>
+  if (body.status !== 'success' || !Array.isArray(data.transactions)) return null
+  entry.pages[page - 1] = data.transactions as SpendlessTx[]
+  return entry.pages[page - 1]
+}
+
+/** Spendless has no working per-order status endpoint, so find the order in recent transactions. */
+async function fetchSpendlessStatus(
+  apiKey: string,
+  reference: string | null,
+  orderId: string | null,
+  submittedAt: string | null | undefined,
+) {
+  if (!reference && !orderId) return { ok: false, status: null, body: { error: 'No Spendless reference' } }
+  const oldestWanted = submittedAt ? Date.parse(submittedAt) - 60 * 60 * 1000 : null
+
+  for (let page = 1; page <= SPENDLESS_MAX_PAGES; page++) {
+    const txs = await spendlessTransactionsPage(apiKey, page)
+    if (!txs) return { ok: false, status: null, body: { error: 'Spendless transactions unavailable' } }
+    const match = txs.find(
+      (t) =>
+        (reference && String(t.reference ?? '') === reference) ||
+        (orderId && String(t.orderId ?? '') === orderId),
+    )
+    if (match?.status) return { ok: true, status: String(match.status), body: match }
+    if (txs.length < SPENDLESS_PAGE_SIZE) break
+    const oldest = String(txs[txs.length - 1]?.rawCreatedAt ?? '')
+    const oldestAt = oldest ? Date.parse(`${oldest.replace(' ', 'T')}Z`) : NaN
+    if (oldestWanted !== null && !Number.isNaN(oldestAt) && oldestAt < oldestWanted) break
+  }
+  return { ok: false, status: null, body: { error: 'Order not found in recent Spendless transactions' } }
+}
+
 function resolveProviderType(order: OrderRow): ProviderType {
   if (
     order.provider_type === 'skplug' ||
     order.provider_type === 'datahub' ||
     order.provider_type === 'datamart' ||
-    order.provider_type === 'bundlezone'
+    order.provider_type === 'bundlezone' ||
+    order.provider_type === 'spendless'
   ) {
     return order.provider_type
   }
   const name = order.provider_name?.toLowerCase() ?? ''
+  if (name.includes('spendless')) return 'spendless'
   if (name.includes('sk plug') || name.includes('skplug')) return 'skplug'
   if (name.includes('datamart')) return 'datamart'
   if (name.includes('bundlezone') || name.includes('bundle zone')) return 'bundlezone'
@@ -191,11 +259,15 @@ function credentialsForType(
       type: (settingsMap.data_provider_quaternary_type || 'bundlezone').trim().toLowerCase(),
       key: settingsMap.data_provider_quaternary_api_key?.trim() || '',
     },
+    {
+      type: (settingsMap.data_provider_quinary_type || 'spendless').trim().toLowerCase(),
+      key: settingsMap.data_provider_quinary_api_key?.trim() || '',
+    },
   ]
   const keys = slots.filter((s) => s.type === type && s.key).map((s) => s.key)
   if (type === 'datamart') keys.push(settingsMap.datamart_api_key?.trim() || '')
   if (type === 'datahub') keys.push(Deno.env.get('DATAHUB_API_KEY')?.trim() || '')
-  if (keys.filter(Boolean).length === 0 && type !== 'bundlezone') {
+  if (keys.filter(Boolean).length === 0 && type !== 'bundlezone' && type !== 'spendless') {
     keys.push(...slots.map((s) => s.key))
   }
   return [...new Set(keys.filter(Boolean))]
@@ -332,13 +404,52 @@ async function handleBundlezoneWebhook(
     await supabase.from('order_provider_attempts').update(refs).eq('id', row.provider_attempt_id)
   }
 
-  if (mapProviderStatus(status).providerStatus === 'failed') {
+  if (isProviderFailure(status)) {
     const outcome = await handleProviderFailure(supabase, row, settingsMap, status, 'BundleZone webhook')
     return json({ success: true, order_id: row.id, ...outcome })
   }
 
   const applied = await applyProviderStatus(supabase, row, status, refs)
   return json({ success: true, order_id: row.id, status: applied.order_status })
+}
+
+async function handleSpendlessWebhook(
+  supabase: ReturnType<typeof createClient>,
+  req: Request,
+  rawBody: string,
+  settingsMap: Record<string, string>,
+) {
+  const secret = settingsMap.spendless_webhook_secret?.trim() || ''
+  if (secret) {
+    const provided = (req.headers.get('x-webhook-signature')?.trim() ?? '').replace(/^sha256=/i, '').toLowerCase()
+    const expected = (await hmacSha256Hex(secret, rawBody)).toLowerCase()
+    if (!timingSafeEqual(provided, expected)) {
+      return json({ success: false, error: 'Invalid webhook signature' }, 401)
+    }
+  }
+
+  let body: Record<string, unknown>
+  try {
+    body = JSON.parse(rawBody || '{}') as Record<string, unknown>
+  } catch {
+    return json({ success: false, error: 'Invalid JSON payload' }, 400)
+  }
+
+  const data = (body.data ?? {}) as Record<string, unknown>
+  const reference = data.reference ? String(data.reference) : null
+  if (!reference) return json({ success: false, error: 'Missing reference in webhook payload' }, 400)
+
+  const { data: order } = await supabase
+    .from('orders')
+    .select('*')
+    .eq('provider_type', 'spendless')
+    .eq('provider_reference', reference)
+    .maybeSingle()
+  if (!order) return json({ success: true, message: 'Order not found locally', reference })
+
+  // The payload is only a hint; the status is re-read from Spendless before anything changes.
+  const result = await syncOrderStatus(supabase, order as OrderRow, settingsMap)
+  return json({ success: true, order_id: (order as OrderRow).id, confirmed_by_status_check: true, result })
 }
 
 function shouldApplyOrderStatus(current: string, next: string | null) {
@@ -387,6 +498,107 @@ function triggerFulfillment(orderId: string) {
 }
 
 /**
+ * Orders sent before re-routing existed have no attempt row. Record the failed send against the
+ * slot that holds this provider so fulfill-orders skips it when re-routing.
+ */
+async function recordLegacyAttempt(
+  supabase: ReturnType<typeof createClient>,
+  order: OrderRow,
+  settingsMap: Record<string, string>,
+  reason: string,
+) {
+  const type = resolveProviderType(order)
+  const slot = PROVIDER_SLUGS.find((slug) => {
+    const slotType = (settingsMap[`data_provider_${slug}_type`] || SLOT_DEFAULT_TYPE[slug]).trim().toLowerCase()
+    return slotType === type && slotCredential(settingsMap, slug)
+  })
+  if (!slot) return false
+
+  const { error } = await supabase.from('order_provider_attempts').upsert(
+    {
+      order_id: order.id,
+      route_round: order.provider_route_round ?? 0,
+      attempt_no: (order.provider_attempts ?? 0) + 1,
+      provider_slot: slot,
+      provider_type: type,
+      provider_name: order.provider_name ?? type,
+      outcome: 'failed_later',
+      provider_reference: order.provider_reference,
+      provider_order_number: order.provider_order_number,
+      error: reason,
+      finished_at: new Date().toISOString(),
+    },
+    { onConflict: 'order_id,route_round,provider_slot', ignoreDuplicates: true },
+  )
+  return !error
+}
+
+/**
+ * SK Plug refunds can land after the auto-deliver timer has marked an order completed, when
+ * per-order polling has already stopped. orders-summary lists every refunded order in one call.
+ */
+async function reconcileSkplugRefunds(
+  supabase: ReturnType<typeof createClient>,
+  settingsMap: Record<string, string>,
+) {
+  if (settingsMap.skplug_refund_reroute_enabled === 'false') return { skipped: 'disabled' }
+  const tokens = credentialsForType(settingsMap, 'skplug')
+  if (tokens.length === 0) return { skipped: 'no SK Plug token' }
+
+  const now = new Date()
+  const { data: claimed } = await supabase
+    .from('site_settings')
+    .update({ value: now.toISOString(), updated_at: now.toISOString() })
+    .eq('key', 'skplug_refund_sync_last_at')
+    .lt('value', new Date(now.getTime() - SKPLUG_REFUND_SYNC_INTERVAL_MS).toISOString())
+    .select('key')
+  if (!claimed?.length) return { skipped: 'ran recently' }
+
+  const maxAgeHours = Number(settingsMap.provider_refund_reroute_max_age_hours) || 48
+  const since = now.getTime() - maxAgeHours * 60 * 60 * 1000
+
+  const refundedIds = new Set<string>()
+  for (const token of tokens) {
+    const res = await fetch(`${SKPLUG_BASE}/orders-summary/`, {
+      headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+    }).catch(() => null)
+    if (!res?.ok) continue
+    const body = (await res.json().catch(() => ({}))) as Record<string, { orders?: Array<Record<string, unknown>> }>
+    for (const bucket of ['refunded', 'refund_requested']) {
+      for (const o of body[bucket]?.orders ?? []) {
+        const id = String(o.order_id ?? '')
+        const createdAt = o.created_at ? Date.parse(String(o.created_at)) : NaN
+        if (!id || String(o.status ?? '').toLowerCase() !== 'refunded') continue
+        if (!Number.isNaN(createdAt) && createdAt < since) continue
+        refundedIds.add(id)
+      }
+    }
+  }
+  if (refundedIds.size === 0) return { checked: 0, rerouted: 0 }
+
+  const ids = [...refundedIds]
+  const results = []
+  for (let i = 0; i < ids.length; i += 100) {
+    const { data: rows } = await supabase
+      .from('orders')
+      .select('*')
+      .eq('provider_type', 'skplug')
+      .in('provider_order_number', ids.slice(i, i + 100))
+      .not('provider_status', 'in', '("refunded","failed","rerouting")')
+      .gte('created_at', new Date(since).toISOString())
+    for (const row of (rows ?? []) as OrderRow[]) {
+      const outcome = await handleProviderFailure(supabase, row, settingsMap, 'refunded', 'SK Plug orders-summary')
+      results.push({ order_id: row.id, reference: row.reference, ...outcome })
+    }
+  }
+  return {
+    checked: refundedIds.size,
+    rerouted: results.filter((r) => r.rerouted).length,
+    results,
+  }
+}
+
+/**
  * The provider handling the order's current attempt reported a final failure.
  * Re-route to the next untried provider, or fail the order when none are left.
  * Every write is conditional on provider_attempt_id so a late report about an
@@ -401,6 +613,7 @@ async function handleProviderFailure(
 ) {
   const attemptId = order.provider_attempt_id ?? null
   const reason = `${order.provider_name ?? 'Provider'} reported "${rawStatus}" (${source})`
+  const finalProviderStatus = mapProviderStatus(rawStatus).providerStatus
 
   if (!attemptId && order.provider_status === 'rerouting') {
     return { rerouted: false, stale: true, order_status: order.status }
@@ -414,7 +627,13 @@ async function handleProviderFailure(
       .eq('outcome', 'accepted')
   }
 
-  if (attemptId && isRerouteEnabled(settingsMap)) {
+  // Orders already marked failed may have been refunded to the customer, so never re-send them.
+  const legacyRecorded =
+    !attemptId && order.status !== 'failed' && isRerouteEnabled(settingsMap)
+      ? await recordLegacyAttempt(supabase, order, settingsMap, reason)
+      : false
+
+  if ((attemptId || legacyRecorded) && order.status !== 'failed' && isRerouteEnabled(settingsMap)) {
     const { data: tried } = await supabase
       .from('order_provider_attempts')
       .select('provider_slot')
@@ -424,7 +643,7 @@ async function handleProviderFailure(
     const remaining = rerouteCandidates(settingsMap).filter((slug) => !triedSlots.has(slug))
 
     if (remaining.length > 0) {
-      const { data: reset } = await supabase
+      let resetQuery = supabase
         .from('orders')
         .update({
           provider_submitted_at: null,
@@ -435,8 +654,15 @@ async function handleProviderFailure(
           provider_error: `${reason} — re-routing to the next provider`,
         })
         .eq('id', order.id)
-        .eq('provider_attempt_id', attemptId)
-        .select('id')
+      if (attemptId) {
+        resetQuery = resetQuery.eq('provider_attempt_id', attemptId)
+      } else {
+        resetQuery = resetQuery.is('provider_attempt_id', null)
+        resetQuery = order.provider_status
+          ? resetQuery.eq('provider_status', order.provider_status)
+          : resetQuery.is('provider_status', null)
+      }
+      const { data: reset } = await resetQuery.select('id')
       if (reset?.length) {
         triggerFulfillment(order.id)
         return { rerouted: true, next_slots: remaining, order_status: order.status }
@@ -445,7 +671,7 @@ async function handleProviderFailure(
     }
   }
 
-  const update: Record<string, unknown> = { provider_status: 'failed', provider_error: reason }
+  const update: Record<string, unknown> = { provider_status: finalProviderStatus, provider_error: reason }
   if (shouldApplyOrderStatus(order.status, 'failed')) {
     update.status = 'failed'
     update.failure_reason = reason
@@ -518,7 +744,13 @@ async function syncOrderStatus(
   const providerType = resolveProviderType(order)
   const credentials = await credentialsForOrder(supabase, order, settingsMap, providerType)
   if (credentials.length === 0) {
-    const label = { bundlezone: 'BundleZone API key', skplug: 'SK Plug token', datamart: 'DataMart API key', datahub: 'Datahub key' }
+    const label = {
+      bundlezone: 'BundleZone API key',
+      spendless: 'Spendless API key',
+      skplug: 'SK Plug token',
+      datamart: 'DataMart API key',
+      datahub: 'Datahub key',
+    }
     return { order_id: order.id, skipped: true, reason: `No ${label[providerType]}` }
   }
 
@@ -526,6 +758,13 @@ async function syncOrderStatus(
   for (const credential of credentials) {
     if (providerType === 'bundlezone') {
       result = await fetchBundlezoneStatus(credential, order.provider_reference, order.provider_order_number)
+    } else if (providerType === 'spendless') {
+      result = await fetchSpendlessStatus(
+        credential,
+        order.provider_reference,
+        order.provider_order_number,
+        order.provider_submitted_at,
+      )
     } else if (providerType === 'skplug') {
       const orderId = order.provider_order_number ?? order.provider_reference ?? order.reference
       result = await fetchSkplugStatus(credential, orderId)
@@ -553,14 +792,14 @@ async function syncOrderStatus(
     }
   }
 
-  if (mapProviderStatus(result.status).providerStatus === 'failed') {
+  if (isProviderFailure(result.status)) {
     const outcome = await handleProviderFailure(supabase, order, settingsMap, result.status, 'status check')
     return {
       order_id: order.id,
       reference: order.reference,
       success: true,
       provider_type: providerType,
-      provider_status: outcome.rerouted ? 'rerouting' : 'failed',
+      provider_status: outcome.rerouted ? 'rerouting' : mapProviderStatus(result.status).providerStatus,
       raw_status: result.status,
       ...outcome,
     }
@@ -625,6 +864,13 @@ Deno.serve(async (req) => {
       return await handleBundlezoneWebhook(supabase, req, rawBody, settingsMap)
     }
 
+    if (isWebhook && req.method === 'POST' && path.includes('/spendless')) {
+      const rawBody = await req.text()
+      const { data: settings } = await supabase.from('site_settings').select('key, value')
+      const settingsMap = Object.fromEntries((settings ?? []).map((s) => [s.key, s.value]))
+      return await handleSpendlessWebhook(supabase, req, rawBody, settingsMap)
+    }
+
     if (isWebhook && req.method === 'POST') {
       const rawBody = await req.text()
       const body = (() => {
@@ -669,7 +915,7 @@ Deno.serve(async (req) => {
 
       // Datahub references are our own order references, so a failure callback cannot be tied
       // to a specific attempt. Confirm against the current attempt before re-routing.
-      if (mapProviderStatus(status).providerStatus === 'failed') {
+      if (isProviderFailure(status)) {
         const confirmed = await syncOrderStatus(supabase, row, settingsMap)
         return json({ success: true, order_id: row.id, confirmed_by_status_check: true, result: confirmed })
       }
@@ -700,11 +946,16 @@ Deno.serve(async (req) => {
         results.push(await syncOrderStatus(supabase, order, settingsMap))
       }
 
+      const skplugRefunds = await reconcileSkplugRefunds(supabase, settingsMap).catch((e) => ({
+        error: (e as Error).message,
+      }))
+
       return json({
         success: true,
         processed: results.length,
         updated: results.filter((r) => r.success && !r.unchanged).length,
         results,
+        skplug_refunds: skplugRefunds,
       })
     }
 
@@ -715,9 +966,10 @@ Deno.serve(async (req) => {
     return json({
       success: true,
       endpoints: {
-        'POST /process': 'Poll provider APIs and update order statuses',
+        'POST /process': 'Poll provider APIs, update order statuses, and re-route SK Plug refunds',
         'POST /provider-webhook/datahub': 'Receive Datahub webhook callbacks',
         'POST /provider-webhook/bundlezone': 'Receive signed BundleZone order.status_changed callbacks',
+        'POST /provider-webhook/spendless': 'Receive Spendless order status callbacks (confirmed via API)',
       },
     })
   } catch (e) {

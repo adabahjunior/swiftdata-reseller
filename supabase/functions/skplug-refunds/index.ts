@@ -41,8 +41,13 @@ type LocalOrder = {
   provider_reference: string | null
   provider_status: string | null
   provider_error: string | null
+  provider_name: string | null
+  provider_type: string | null
   created_at: string
 }
+
+const LOCAL_ORDER_COLUMNS =
+  'id, user_id, reference, phone, network, size_gb, amount, status, order_source, provider_order_number, provider_reference, provider_status, provider_error, provider_name, provider_type, created_at'
 
 function json(data: unknown, status = 200) {
   return new Response(JSON.stringify(data), {
@@ -71,6 +76,16 @@ function getSkplugToken(settings: Record<string, string>) {
       type: settings.data_provider_tertiary_type || 'datahub',
       token: settings.data_provider_tertiary_api_key?.trim() || '',
       name: settings.data_provider_tertiary_name?.trim() || 'SK Plug',
+    },
+    {
+      type: settings.data_provider_quaternary_type || 'bundlezone',
+      token: settings.data_provider_quaternary_api_key?.trim() || '',
+      name: settings.data_provider_quaternary_name?.trim() || 'SK Plug',
+    },
+    {
+      type: settings.data_provider_quinary_type || 'spendless',
+      token: settings.data_provider_quinary_api_key?.trim() || '',
+      name: settings.data_provider_quinary_name?.trim() || 'SK Plug',
     },
   ]
   const match = slots.find((s) => s.type === 'skplug' && s.token)
@@ -185,22 +200,37 @@ Deno.serve(async (req) => {
   const skIds = [...new Set(allSkOrders.map((o) => o.order_id).filter(Boolean))]
 
   let localOrders: LocalOrder[] = []
-  if (skIds.length > 0) {
+  const localByProviderId = new Map<string, LocalOrder>()
+  for (let i = 0; i < skIds.length; i += 100) {
+    const chunk = skIds.slice(i, i + 100).map((id) => `"${id}"`).join(',')
     const { data } = await adminClient
       .from('orders')
-      .select(
-        'id, user_id, reference, phone, network, size_gb, amount, status, order_source, provider_order_number, provider_reference, provider_status, provider_error, created_at',
-      )
-      .or(
-        [
-          `provider_order_number.in.(${skIds.map((id) => `"${id}"`).join(',')})`,
-          `provider_reference.in.(${skIds.map((id) => `"${id}"`).join(',')})`,
-        ].join(','),
-      )
-    localOrders = (data ?? []) as LocalOrder[]
-  }
+      .select(LOCAL_ORDER_COLUMNS)
+      .or(`provider_order_number.in.(${chunk}),provider_reference.in.(${chunk})`)
+    localOrders.push(...((data ?? []) as LocalOrder[]))
 
-  const localByProviderId = new Map<string, LocalOrder>()
+    // Re-routed orders no longer carry the SK Plug id; the attempt log still does.
+    const { data: attempts } = await adminClient
+      .from('order_provider_attempts')
+      .select('order_id, provider_order_number')
+      .eq('provider_type', 'skplug')
+      .in('provider_order_number', skIds.slice(i, i + 100))
+    const attemptOrderIds = [...new Set((attempts ?? []).map((a) => String(a.order_id)))]
+    if (attemptOrderIds.length > 0) {
+      const { data: rerouted } = await adminClient
+        .from('orders')
+        .select(LOCAL_ORDER_COLUMNS)
+        .in('id', attemptOrderIds)
+      const byId = new Map(((rerouted ?? []) as LocalOrder[]).map((o) => [o.id, o]))
+      for (const a of attempts ?? []) {
+        const order = byId.get(String(a.order_id))
+        if (order && a.provider_order_number) localByProviderId.set(String(a.provider_order_number), order)
+      }
+      localOrders.push(...byId.values())
+    }
+  }
+  localOrders = [...new Map(localOrders.map((o) => [o.id, o])).values()]
+
   for (const order of localOrders) {
     if (order.provider_order_number) localByProviderId.set(order.provider_order_number, order)
     if (order.provider_reference) localByProviderId.set(order.provider_reference, order)
@@ -212,9 +242,7 @@ Deno.serve(async (req) => {
   if (phones.length > 0) {
     const { data } = await adminClient
       .from('orders')
-      .select(
-        'id, user_id, reference, phone, network, size_gb, amount, status, order_source, provider_order_number, provider_reference, provider_status, provider_error, created_at',
-      )
+      .select(LOCAL_ORDER_COLUMNS)
       .in('phone', phones)
       .eq('provider_type', 'skplug')
       .limit(500)
@@ -271,6 +299,8 @@ Deno.serve(async (req) => {
                 order_source: local.order_source,
                 provider_status: local.provider_status,
                 provider_error: local.provider_error,
+                provider_name: local.provider_name,
+                provider_type: local.provider_type,
                 created_at: local.created_at,
                 user: isAdmin ? profileMap.get(local.user_id) ?? null : null,
               }

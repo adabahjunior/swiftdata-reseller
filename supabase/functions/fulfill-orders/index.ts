@@ -10,6 +10,7 @@ const DATAHUB_BASE = 'https://user.datahubgh.com/api/external'
 const SKPLUG_BASE = 'https://skdataplug.com/api/v1'
 const DATAMART_BASE = 'https://api.datamartgh.shop/api/developer'
 const BUNDLEZONE_BASE = 'https://bundlezone.shop/api'
+const SPENDLESS_BASE = 'https://spendless.top/api'
 const REQUEST_TIMEOUT_MS = 25_000
 
 /** Our DB network → Datahub networkKey */
@@ -44,6 +45,14 @@ const BUNDLEZONE_NETWORK_MAP: Record<string, string> = {
   telecel: 'TELECEL',
 }
 
+/** Our DB network → Spendless networkKey */
+const SPENDLESS_NETWORK_MAP: Record<string, string> = {
+  mtn: 'YELLO',
+  at_ishare: 'AT_PREMIUM',
+  at_bigtime: 'AT_BIGTIME',
+  telecel: 'TELECEL',
+}
+
 /** BundleZone codes documented as "no order was created and no charge was made". */
 const BUNDLEZONE_NO_ORDER_CODES = new Set([
   'BENEFICIARY_NOT_VERIFIED',
@@ -58,13 +67,14 @@ const BUNDLEZONE_NO_ORDER_CODES = new Set([
   'FORBIDDEN',
 ])
 
-const PROVIDER_SLUGS = ['primary', 'secondary', 'tertiary', 'quaternary'] as const
+const PROVIDER_SLUGS = ['primary', 'secondary', 'tertiary', 'quaternary', 'quinary'] as const
 
 const SLOT_DEFAULT_TYPE: Record<ProviderSlug, ProviderType> = {
   primary: 'datahub',
   secondary: 'skplug',
   tertiary: 'datahub',
   quaternary: 'bundlezone',
+  quinary: 'spendless',
 }
 
 type OrderRow = {
@@ -80,7 +90,7 @@ type OrderRow = {
 }
 
 type ProviderSlug = (typeof PROVIDER_SLUGS)[number]
-type ProviderType = 'datahub' | 'skplug' | 'datamart' | 'bundlezone'
+type ProviderType = 'datahub' | 'skplug' | 'datamart' | 'bundlezone' | 'spendless'
 
 type ActiveProvider = {
   slug: ProviderSlug
@@ -125,7 +135,7 @@ const ORDER_CLAIM_COLUMNS =
 
 function normalizeProviderType(raw: string | undefined, fallback: ProviderType): ProviderType {
   const t = (raw ?? fallback).trim().toLowerCase()
-  if (t === 'skplug' || t === 'datamart' || t === 'datahub' || t === 'bundlezone') return t
+  if (t === 'skplug' || t === 'datamart' || t === 'datahub' || t === 'bundlezone' || t === 'spendless') return t
   return fallback
 }
 
@@ -133,6 +143,7 @@ function defaultProviderName(type: ProviderType, slug: ProviderSlug) {
   if (type === 'skplug') return 'SK Plug'
   if (type === 'datamart') return 'DataMart GH'
   if (type === 'bundlezone') return 'BundleZone'
+  if (type === 'spendless') return 'Spendless'
   return slug === 'primary' ? 'Primary Datahub' : 'Datahub'
 }
 
@@ -355,11 +366,61 @@ async function bundlezonePurchase(
   }
 }
 
+async function spendlessPurchase(
+  apiKey: string,
+  payload: { networkKey: string; recipient: string; capacity: number; webhook_url?: string },
+): Promise<PurchaseResult> {
+  const reply = await sendJson(`${SPENDLESS_BASE}/purchase`, {
+    headers: { 'X-API-Key': apiKey, 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: payload,
+  })
+  const body = reply.body
+  const data = (body.data ?? {}) as Record<string, unknown>
+  const reference = data.reference ?? null
+  const orderId = data.orderId ?? data.order_id ?? null
+  const orderStatus = String(data.status ?? '').toLowerCase()
+  const ok2xx = reply.status !== null && reply.status >= 200 && reply.status < 300
+  const explicitFailure = body.status === 'error' || body.status === 'failed' || orderStatus === 'failed'
+
+  let outcome: Outcome
+  if (ok2xx && body.status === 'success' && Boolean(reference || orderId) && orderStatus !== 'failed') {
+    outcome = 'accepted'
+  } else if (reply.status === 503 && body.status === 'error' && /disabled/i.test(String(body.message ?? ''))) {
+    // Spendless answers 503 "endpoint is currently disabled" before any order is created.
+    outcome = 'rejected'
+  } else {
+    outcome = classifyReply(reply, explicitFailure)
+  }
+
+  return {
+    outcome,
+    httpStatus: reply.status,
+    providerRef: reference ? String(reference) : null,
+    providerOrderNo: orderId ? String(orderId) : null,
+    error: outcome === 'accepted' ? null : replyError(reply, body.message ?? body.error, 'Spendless rejected order'),
+    raw: body,
+  }
+}
+
+function spendlessWebhookUrl() {
+  const base = Deno.env.get('SUPABASE_URL')?.replace(/\/$/, '')
+  return base ? `${base}/functions/v1/sync-provider-status/provider-webhook/spendless` : undefined
+}
+
 async function purchaseWithProvider(
   provider: ActiveProvider,
   order: OrderRow,
   mtnNetworkKey: string,
 ): Promise<PurchaseResult> {
+  if (provider.type === 'spendless') {
+    return spendlessPurchase(provider.apiKey, {
+      networkKey: SPENDLESS_NETWORK_MAP[order.network] ?? order.network.toUpperCase(),
+      recipient: order.phone,
+      capacity: Number(order.size_gb),
+      webhook_url: spendlessWebhookUrl(),
+    })
+  }
+
   if (provider.type === 'bundlezone') {
     return bundlezonePurchase(provider.apiKey, {
       network: BUNDLEZONE_NETWORK_MAP[order.network] ?? order.network.toUpperCase(),
@@ -400,6 +461,14 @@ async function purchaseWithProvider(
 }
 
 async function providerHealth(provider: ActiveProvider) {
+  if (provider.type === 'spendless') {
+    const reply = await sendJson(`${SPENDLESS_BASE}/balance`, {
+      method: 'GET',
+      headers: { 'X-API-Key': provider.apiKey, Accept: 'application/json' },
+    })
+    return { ok: reply.status === 200 && reply.body.status === 'success', body: reply.body }
+  }
+
   if (provider.type === 'bundlezone') {
     const reply = await sendJson(`${BUNDLEZONE_BASE}/balance.php`, {
       method: 'GET',
@@ -764,7 +833,7 @@ Deno.serve(async (req) => {
         'POST /process':
           'Submit pending orders to the active provider, auto re-routing definite rejections to the next provider slot',
         'POST /order/{id}': 'Submit one order (same re-routing rules)',
-        'GET /health?slot=': 'Check the active provider, or a specific slot (primary/secondary/tertiary/quaternary)',
+        'GET /health?slot=': 'Check the active provider, or a specific slot (primary/secondary/tertiary/quaternary/quinary)',
       },
     })
   } catch (e) {

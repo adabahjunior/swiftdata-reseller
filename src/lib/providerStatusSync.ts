@@ -28,6 +28,12 @@ export function bundlezoneWebhookUrl(): string {
   return `${base}/functions/v1/sync-provider-status/provider-webhook/bundlezone`
 }
 
+export function spendlessWebhookUrl(): string {
+  const base = import.meta.env.VITE_SUPABASE_URL
+  if (!base) return ''
+  return `${base}/functions/v1/sync-provider-status/provider-webhook/spendless`
+}
+
 export function verificationWebhookUrl(): string {
   const base = import.meta.env.VITE_SUPABASE_URL
   if (!base) return ''

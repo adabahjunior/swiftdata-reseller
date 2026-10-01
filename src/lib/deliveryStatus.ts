@@ -19,6 +19,8 @@ const PROVIDER_FAILED = new Set([
   'cancelled',
   'canceled',
   'rejected',
+  'refunded',
+  'reversed',
 ])
 
 /** Provider rejected the purchase (even if local status is still Delivered). */
@@ -42,6 +44,7 @@ export function deliveryStatusLabel(order: DeliveryOrder): string {
   const providerState = order.provider_status?.toLowerCase().trim()
   if (providerState === 'rerouting') return 'Re-routing to next provider…'
   if (providerState === 'uncertain') return 'Needs review — unclear provider response'
+  if (providerState === 'refunded' && order.status !== 'failed') return 'Provider refunded — not delivered'
   if (order.status === 'completed' && isProviderRejected(order)) {
     return 'Delivered — provider rejected'
   }
@@ -70,6 +73,7 @@ export function deliveryStatusTone(order: DeliveryOrder): 'success' | 'warning' 
   if (label.includes('re-routing')) return 'warning'
   if (
     label.includes('rejected') ||
+    label.includes('refunded') ||
     label.includes('fail') ||
     label.includes('insufficient') ||
     label.includes('needs review')

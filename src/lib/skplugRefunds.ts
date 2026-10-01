@@ -21,6 +21,8 @@ export type SkplugRefundOrder = {
     order_source: string | null
     provider_status: string | null
     provider_error: string | null
+    provider_name?: string | null
+    provider_type?: string | null
     created_at: string
     user: { id: string; full_name: string | null; email: string | null } | null
   } | null
