@@ -6,6 +6,7 @@ import {
   LogOut,
   Menu,
   MessageCircle,
+  MessageSquare,
   Package,
   RotateCcw,
   Settings,
@@ -35,6 +36,7 @@ const ICONS = {
   ShieldCheck,
   Ticket,
   MessageCircle,
+  MessageSquare,
   Zap,
   Image,
 }

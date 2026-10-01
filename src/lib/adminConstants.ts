@@ -31,6 +31,7 @@ export const ADMIN_NAV_GROUPS: NavGroupDef[] = [
     items: [
       { label: 'Users', to: '/admin/users', icon: 'Users' },
       { label: 'Notifications', to: '/admin/notifications', icon: 'Bell' },
+      { label: 'SMS Blast', to: '/admin/sms', icon: 'MessageSquare' },
     ],
   },
   {
@@ -56,6 +57,7 @@ export const ADMIN_PAGE_TITLES: Record<string, string> = {
   '/admin/utilities': 'Utility Products',
   '/admin/users': 'Users',
   '/admin/notifications': 'Notifications',
+  '/admin/sms': 'SMS Blast',
   '/admin/support': 'Support WhatsApp',
   '/admin/settings': 'Site Settings',
 }

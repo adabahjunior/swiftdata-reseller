@@ -793,7 +793,7 @@ export default function AdminSiteSettingsPage() {
             ['min_topup_amount', 'Minimum wallet top-up in GHS'],
             ['sms_enabled', 'Send SMS via TXTConnect (credit, failed orders, low balance)'],
             ['sms_api_key', 'TXTConnect API key'],
-            ['sms_sender_id', 'TXTConnect sender ID (e.g. OrderInfo)'],
+            ['sms_sender_id', 'TXTConnect sender ID (e.g. swiftupdate)'],
             ['xcel_enabled', 'Enable Airtime / ECG / TV via Xcel'],
             ['xcel_user_id', 'Xcel partner user_id'],
             ['xcel_from_acct', 'Xcel from_acct wallet'],

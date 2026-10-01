@@ -26,6 +26,7 @@ import AdminUtilityProductsPage from './pages/admin/AdminUtilityProductsPage'
 import AdminUsersPage from './pages/admin/AdminUsersPage'
 import AdminUserDetailPage from './pages/admin/AdminUserDetailPage'
 import AdminNotificationsPage from './pages/admin/AdminNotificationsPage'
+import AdminSmsBlastPage from './pages/admin/AdminSmsBlastPage'
 import AdminBannersPage from './pages/admin/AdminBannersPage'
 import SupportPage from './pages/dashboard/SupportPage'
 import TicketsPage from './pages/dashboard/TicketsPage'
@@ -75,6 +76,7 @@ export default function App() {
               <Route path="users" element={<AdminUsersPage />} />
               <Route path="users/:userId" element={<AdminUserDetailPage />} />
               <Route path="notifications" element={<AdminNotificationsPage />} />
+              <Route path="sms" element={<AdminSmsBlastPage />} />
               <Route path="support" element={<AdminSupportPage />} />
               <Route path="settings" element={<AdminSiteSettingsPage />} />
             </Route>
