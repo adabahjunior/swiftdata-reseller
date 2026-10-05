@@ -87,6 +87,8 @@ type OrderRow = {
   provider_submitted_at: string | null
   provider_route_round?: number | null
   provider_attempts?: number | null
+  user_id?: string | null
+  created_at?: string
 }
 
 type ProviderSlug = (typeof PROVIDER_SLUGS)[number]
@@ -131,7 +133,7 @@ type AttemptRow = {
 }
 
 const ORDER_CLAIM_COLUMNS =
-  'id, reference, phone, network, size_gb, status, provider_submitted_at, provider_route_round, provider_attempts'
+  'id, user_id, reference, phone, network, size_gb, status, created_at, provider_submitted_at, provider_route_round, provider_attempts'
 
 function normalizeProviderType(raw: string | undefined, fallback: ProviderType): ProviderType {
   const t = (raw ?? fallback).trim().toLowerCase()
@@ -180,6 +182,12 @@ function getActiveProvider(settingsMap: Record<string, string>, envFallback?: st
 
 function isRerouteEnabled(settingsMap: Record<string, string>) {
   return settingsMap.provider_auto_reroute_enabled !== 'false'
+}
+
+/** 0 disables the duplicate hold. */
+function duplicateWindowMinutes(settingsMap: Record<string, string>) {
+  const raw = Number(settingsMap.order_duplicate_hold_minutes ?? 10)
+  return Number.isFinite(raw) && raw > 0 ? Math.min(raw, 1440) : 0
 }
 
 /** Active provider first, then the configured fallback order. Slots without a key are skipped. */
@@ -548,11 +556,42 @@ async function openAttempt(
   return (data?.[0]?.id as string | undefined) ?? null
 }
 
+/**
+ * Providers only de-duplicate their own orders, so re-routing could deliver a double-submitted
+ * order through a second provider. Hold an order if the same buyer already ordered the same
+ * bundle to the same number shortly before, unless that earlier order definitely failed.
+ */
+async function findEarlierDuplicate(
+  supabase: ReturnType<typeof createClient>,
+  order: OrderRow,
+  windowMinutes: number,
+) {
+  if (!order.created_at || !order.user_id) return null
+  const createdAt = Date.parse(order.created_at)
+  const { data } = await supabase
+    .from('orders')
+    .select('reference')
+    .eq('user_id', order.user_id)
+    .eq('phone', order.phone)
+    .eq('network', order.network)
+    .eq('size_gb', order.size_gb)
+    .eq('admin_visible', true)
+    .neq('id', order.id)
+    .neq('status', 'failed')
+    .or('provider_status.is.null,provider_status.not.in.(failed,refunded)')
+    .lt('created_at', order.created_at)
+    .gte('created_at', new Date(createdAt - windowMinutes * 60_000).toISOString())
+    .order('created_at', { ascending: false })
+    .limit(1)
+  return (data?.[0] as { reference: string } | undefined) ?? null
+}
+
 async function fulfillOrder(
   supabase: ReturnType<typeof createClient>,
   chain: ActiveProvider[],
   order: OrderRow,
   mtnNetworkKey: string,
+  duplicateWindowMinutes: number,
 ) {
   if (order.provider_submitted_at) {
     return { order_id: order.id, skipped: true, reason: 'Already submitted' }
@@ -573,6 +612,27 @@ async function fulfillOrder(
   if (priorError) throw priorError
 
   const prior = (priorRows as AttemptRow[]) ?? []
+
+  if (round === 0 && prior.length === 0 && (claimed.provider_attempts ?? 0) === 0 && duplicateWindowMinutes > 0) {
+    const earlier = await findEarlierDuplicate(supabase, claimed, duplicateWindowMinutes)
+    if (earlier) {
+      const error = `Possible duplicate of ${earlier.reference}: same number and bundle ordered within ${duplicateWindowMinutes} minutes. Held for review, not sent to any provider. Use Retry to send it anyway.`
+      await supabase
+        .from('orders')
+        .update({ provider_status: 'uncertain', provider_error: error })
+        .eq('id', claimed.id)
+      return {
+        order_id: claimed.id,
+        reference: claimed.reference,
+        success: false,
+        provider_status: 'uncertain',
+        duplicate_of: earlier.reference,
+        error,
+        attempts: [],
+      }
+    }
+  }
+
   const tried = new Set(prior.map((a) => a.provider_slot))
   const failures = prior
     .filter((a) => a.outcome === 'rejected' || a.outcome === 'failed_later')
@@ -654,12 +714,14 @@ async function fulfillOrder(
 
     if (result.outcome === 'uncertain') {
       const error = `Unclear response from ${provider.name} — not re-routed to avoid a duplicate. Check ${provider.name} before retrying. ${result.error ?? ''}`.trim()
+      // Ids in an unclear reply can belong to a different order (e.g. SK Plug's "duplicate order"
+      // points at the earlier one), so they stay on the attempt row and never drive status sync.
       await supabase
         .from('orders')
         .update({
           provider_status: 'uncertain',
-          provider_reference: result.providerRef,
-          provider_order_number: result.providerOrderNo,
+          provider_reference: null,
+          provider_order_number: null,
           provider_error: error,
         })
         .eq('id', claimed.id)
@@ -749,9 +811,10 @@ Deno.serve(async (req) => {
         return json({ success: false, error: error.message }, 500)
       }
 
+      const dupWindow = duplicateWindowMinutes(settingsMap)
       const results = []
       for (const order of (orders as OrderRow[]) ?? []) {
-        results.push(await fulfillOrder(supabase, chain, order, mtnKey))
+        results.push(await fulfillOrder(supabase, chain, order, mtnKey, dupWindow))
       }
 
       return json({
@@ -792,7 +855,7 @@ Deno.serve(async (req) => {
         return json({ success: false, error: 'Order not found' }, 404)
       }
 
-      const result = await fulfillOrder(supabase, chain, order as OrderRow, mtnKey)
+      const result = await fulfillOrder(supabase, chain, order as OrderRow, mtnKey, duplicateWindowMinutes(settingsMap))
       return json({
         success: true,
         active_provider: chain[0].slug,

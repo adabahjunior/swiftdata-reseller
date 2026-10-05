@@ -5,6 +5,7 @@ import AdminOrderExportsPanel from '../../components/admin/AdminOrderExportsPane
 import { ProviderRouteHistory } from '../../components/admin/ProviderRouteHistory'
 import { useAuth } from '../../context/AuthContext'
 import { useAdminOrders } from '../../hooks/useAdminData'
+import { adminRetryWithConfirm, callAdminRetry, type AdminRetryResult } from '../../lib/adminRetry'
 import { canAdminRetryOrder, deliveryStatusLabel, deliveryStatusTone } from '../../lib/deliveryStatus'
 import { triggerOrderFulfillment } from '../../lib/providerFulfillment'
 import { triggerProviderStatusSync } from '../../lib/providerStatusSync'
@@ -94,20 +95,21 @@ export default function AdminOrdersPage() {
     setRetryingId(orderId)
     setMessage(null)
 
-    const { data, error } = await supabase.rpc('admin_retry_failed_order', {
-      p_admin_id: admin.id,
-      p_order_id: orderId,
-    })
+    const data = await adminRetryWithConfirm(admin.id, orderId)
 
     setRetryingId(null)
 
-    if (error || !data?.success) {
-      setMessage(error?.message ?? data?.error ?? 'Retry failed')
+    if (data.cancelled) {
+      setMessage('Retry cancelled.')
+      return
+    }
+    if (!data.success || !data.order) {
+      setMessage(data.error ?? 'Retry failed')
       return
     }
 
     setMessage(`Order ${data.order.reference} retried and queued for provider.`)
-    if (data.order?.id) void triggerOrderFulfillment(data.order.id)
+    void triggerOrderFulfillment(data.order.id)
     triggerProviderStatusSync()
     await refresh()
   }
@@ -120,33 +122,52 @@ export default function AdminOrdersPage() {
 
     let succeeded = 0
     let failed = 0
+    let skipped = 0
     const errors: string[] = []
+    const risky: Array<{ id: string; reference: string }> = []
+
+    const record = (data: AdminRetryResult, orderId: string) => {
+      if (!data.success || !data.order) {
+        failed += 1
+        errors.push(data.error ?? orderId)
+        return
+      }
+      succeeded += 1
+      void triggerOrderFulfillment(String(data.order.id))
+    }
 
     for (const orderId of ids) {
-      const { data, error } = await supabase.rpc('admin_retry_failed_order', {
-        p_admin_id: admin.id,
-        p_order_id: orderId,
-      })
-
-      if (error || !data?.success) {
-        failed += 1
-        errors.push(error?.message ?? data?.error ?? orderId)
+      const data = await callAdminRetry(admin.id, orderId)
+      if (data.needs_confirmation) {
+        risky.push({ id: orderId, reference: data.reference ?? orderId })
         continue
       }
+      record(data, orderId)
+    }
 
-      succeeded += 1
-      if (data.order?.id) void triggerOrderFulfillment(String(data.order.id))
+    if (risky.length > 0) {
+      const sendAnyway = window.confirm(
+        `${risky.length} order(s) may already be with a provider and could be delivered twice:\n\n` +
+          `${risky.slice(0, 15).map((r) => r.reference).join(', ')}${risky.length > 15 ? ', …' : ''}\n\n` +
+          'OK = send them again anyway. Cancel = skip them and check the provider first.',
+      )
+      if (sendAnyway) {
+        for (const r of risky) record(await callAdminRetry(admin.id, r.id, true), r.id)
+      } else {
+        skipped = risky.length
+      }
     }
 
     triggerProviderStatusSync()
     setBulkUpdating(false)
     setSelected(new Set())
 
+    const skippedNote = skipped > 0 ? ` Skipped ${skipped} that may already be with a provider.` : ''
     if (failed === 0) {
-      setMessage(`Retried ${succeeded} order(s) and queued them for the provider.`)
+      setMessage(`Retried ${succeeded} order(s) and queued them for the provider.${skippedNote}`)
     } else {
       setMessage(
-        `Retried ${succeeded}, ${failed} failed. ${errors[0] ?? ''}`.trim(),
+        `Retried ${succeeded}, ${failed} failed.${skippedNote} ${errors[0] ?? ''}`.trim(),
       )
     }
     await refresh()

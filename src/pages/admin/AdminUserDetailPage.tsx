@@ -8,6 +8,7 @@ import { PACKAGE_NETWORKS } from '../../lib/constants'
 import { canAdminRetryOrder } from '../../lib/deliveryStatus'
 import { supabase } from '../../lib/supabase'
 import { formatCurrency, formatDate, formatNetwork, generateApiKey } from '../../lib/format'
+import { adminRetryWithConfirm } from '../../lib/adminRetry'
 import { triggerOrderFulfillment } from '../../lib/providerFulfillment'
 import { triggerProviderStatusSync } from '../../lib/providerStatusSync'
 import { triggerSmsDispatch } from '../../lib/smsDispatch'
@@ -142,20 +143,21 @@ export default function AdminUserDetailPage() {
     setRetryingOrderId(orderId)
     setMessage(null)
 
-    const { data, error } = await supabase.rpc('admin_retry_failed_order', {
-      p_admin_id: admin.id,
-      p_order_id: orderId,
-    })
+    const data = await adminRetryWithConfirm(admin.id, orderId)
 
     setRetryingOrderId(null)
 
-    if (error || !data?.success) {
-      setMessage(error?.message ?? data?.error ?? 'Retry failed')
+    if (data.cancelled) {
+      setMessage('Retry cancelled.')
+      return
+    }
+    if (!data.success || !data.order) {
+      setMessage(data.error ?? 'Retry failed')
       return
     }
 
     setMessage(`Order ${data.order.reference} retried and queued for provider.`)
-    if (data.order?.id) void triggerOrderFulfillment(String(data.order.id))
+    void triggerOrderFulfillment(String(data.order.id))
     triggerProviderStatusSync()
     await refresh()
   }

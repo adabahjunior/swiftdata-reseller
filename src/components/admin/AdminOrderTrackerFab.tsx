@@ -5,6 +5,7 @@ import { StatusBadge } from '../dashboard/ui'
 import { useAuth } from '../../context/AuthContext'
 import { canAdminRetryOrder, deliveryStatusLabel, deliveryStatusTone } from '../../lib/deliveryStatus'
 import { formatCurrency, formatDate, formatNetwork } from '../../lib/format'
+import { adminRetryWithConfirm } from '../../lib/adminRetry'
 import { triggerOrderFulfillment } from '../../lib/providerFulfillment'
 import { triggerProviderStatusSync } from '../../lib/providerStatusSync'
 import { supabase } from '../../lib/supabase'
@@ -109,20 +110,21 @@ export function AdminOrderTrackerFab() {
     setRetryingId(orderId)
     setRetryMessage(null)
 
-    const { data, error: rpcError } = await supabase.rpc('admin_retry_failed_order', {
-      p_admin_id: admin.id,
-      p_order_id: orderId,
-    })
+    const data = await adminRetryWithConfirm(admin.id, orderId)
 
     setRetryingId(null)
 
-    if (rpcError || !data?.success) {
-      setRetryMessage(rpcError?.message ?? data?.error ?? 'Retry failed')
+    if (data.cancelled) {
+      setRetryMessage('Retry cancelled.')
+      return
+    }
+    if (!data.success || !data.order) {
+      setRetryMessage(data.error ?? 'Retry failed')
       return
     }
 
     setRetryMessage(`Order ${data.order.reference} retried and queued for provider.`)
-    if (data.order?.id) void triggerOrderFulfillment(String(data.order.id))
+    void triggerOrderFulfillment(String(data.order.id))
     triggerProviderStatusSync()
     if (mode === 'live') {
       await fetchTracked({ liveOnly: true, showLoading: false })

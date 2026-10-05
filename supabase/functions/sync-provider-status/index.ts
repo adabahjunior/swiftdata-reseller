@@ -386,6 +386,7 @@ async function handleBundlezoneWebhook(
       .eq('size_gb', Number(data.capacity))
       .is('provider_reference', null)
       .is('provider_order_number', null)
+      .not('provider_status', 'in', '("uncertain","rerouting")')
       .in('status', ['pending', 'processing'])
       .order('provider_submitted_at', { ascending: false })
       .limit(1)
@@ -584,7 +585,7 @@ async function reconcileSkplugRefunds(
       .select('*')
       .eq('provider_type', 'skplug')
       .in('provider_order_number', ids.slice(i, i + 100))
-      .not('provider_status', 'in', '("refunded","failed","rerouting")')
+      .not('provider_status', 'in', '("refunded","failed","rerouting","uncertain")')
       .gte('created_at', new Date(since).toISOString())
     for (const row of (rows ?? []) as OrderRow[]) {
       const outcome = await handleProviderFailure(supabase, row, settingsMap, 'refunded', 'SK Plug orders-summary')
@@ -617,6 +618,11 @@ async function handleProviderFailure(
 
   if (!attemptId && order.provider_status === 'rerouting') {
     return { rerouted: false, stale: true, order_status: order.status }
+  }
+  // An unclear send may still be delivered, and status reports for it can't be trusted to
+  // belong to this order, so only an admin may re-send it.
+  if (order.provider_status === 'uncertain') {
+    return { rerouted: false, skipped: 'uncertain', order_status: order.status }
   }
 
   if (attemptId) {
@@ -705,6 +711,9 @@ async function applyProviderStatus(
 ) {
   if (!order.provider_attempt_id && order.provider_status === 'rerouting') {
     return { provider_status: 'rerouting', order_status: order.status, stale: true }
+  }
+  if (order.provider_status === 'uncertain') {
+    return { provider_status: 'uncertain', order_status: order.status, skipped: 'uncertain' }
   }
   const mapped = mapProviderStatus(rawStatus)
   const update: Record<string, unknown> = { provider_status: mapped.providerStatus, ...extra }
