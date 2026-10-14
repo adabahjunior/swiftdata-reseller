@@ -87,6 +87,7 @@ export const NAV_GROUPS: NavGroupDef[] = [
     label: 'Orders',
     items: [
       { label: 'Place Order', to: '/dashboard/place-order', icon: 'Send' },
+      { label: 'MTN MashUp', to: '/dashboard/mashup', icon: 'Layers' },
       { label: 'Utilities', to: '/dashboard/utilities', icon: 'Zap' },
       { label: 'Verify Numbers', to: '/dashboard/verify-numbers', icon: 'ShieldCheck' },
       { label: 'All Orders', to: '/dashboard/orders', icon: 'ShoppingBag' },

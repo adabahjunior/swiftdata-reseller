@@ -143,8 +143,9 @@ async function fetchDatamartStatus(apiKey: string, reference: string) {
   })
   const body = await res.json().catch(() => ({}))
   const data = (body?.data ?? {}) as Record<string, unknown>
-  const status = data.status ?? body?.status
-  if (status && String(status).toLowerCase() !== 'error') {
+  // body.status is the envelope ("success"/"error"), not the order status.
+  const status = data.orderStatus ?? data.status
+  if (status) {
     return { ok: true, status: String(status), body }
   }
   return { ok: false, status: null, body }

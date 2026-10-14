@@ -8,6 +8,7 @@ import { PACKAGE_NETWORKS } from '../../lib/constants'
 import { canAdminRetryOrder } from '../../lib/deliveryStatus'
 import { supabase } from '../../lib/supabase'
 import { formatCurrency, formatDate, formatNetwork, generateApiKey } from '../../lib/format'
+import { orderNetworkLabel, orderProductLabel } from '../../lib/mashup'
 import { adminRetryWithConfirm } from '../../lib/adminRetry'
 import { triggerOrderFulfillment } from '../../lib/providerFulfillment'
 import { triggerProviderStatusSync } from '../../lib/providerStatusSync'
@@ -491,8 +492,8 @@ export default function AdminUserDetailPage() {
                 {orders.slice(0, 10).map((o) => (
                   <tr key={o.id}>
                     <td className="px-5 py-3 font-mono text-xs">{o.reference}</td>
-                    <td className="px-5 py-3">{formatNetwork(o.network)}</td>
-                    <td className="px-5 py-3">{o.size_gb} GB</td>
+                    <td className="px-5 py-3">{orderNetworkLabel(o)}</td>
+                    <td className="px-5 py-3">{orderProductLabel(o)}</td>
                     <td className="px-5 py-3 font-bold">{formatCurrency(Number(o.amount))}</td>
                     <td className="px-5 py-3"><StatusBadge status={o.status} /></td>
                     <td className="px-5 py-3">

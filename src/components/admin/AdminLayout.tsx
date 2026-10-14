@@ -2,6 +2,7 @@ import {
   ArrowLeft,
   Bell,
   Image,
+  Layers,
   LayoutDashboard,
   LogOut,
   Menu,
@@ -39,6 +40,7 @@ const ICONS = {
   MessageSquare,
   Zap,
   Image,
+  Layers,
 }
 
 function AdminSidebar({

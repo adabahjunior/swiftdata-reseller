@@ -26,8 +26,43 @@ function apiNetworkLabel(apiNetwork: string): string {
   return API_NETWORK_LABELS[apiNetwork] ?? apiNetwork
 }
 
+function mashupContents(meta: Record<string, unknown>) {
+  return {
+    data_mb: Number(meta.mb ?? 0),
+    data_gb: Number(meta.capacity ?? 0),
+    onnet_minutes: Number(meta.onnet_mins ?? 0),
+    offnet_minutes: Number(meta.offnet_mins ?? 0),
+    sms: Number(meta.sms ?? 0),
+    validity_days: Number(meta.validity_days ?? 30),
+  }
+}
+
+function mapMashupPackageToApi(pkg: Record<string, unknown>) {
+  return {
+    package_code: pkg.code,
+    title: pkg.title,
+    price: Number(pkg.price),
+    ...mashupContents(pkg),
+  }
+}
+
 function mapOrderToApi(order: Record<string, unknown>) {
   const serviceType = String(order.service_type ?? 'data')
+  if (serviceType === 'mashup') {
+    const meta = (order.utility_meta ?? {}) as Record<string, unknown>
+    return {
+      reference: order.reference,
+      service_type: 'mashup',
+      phone: order.phone,
+      package_code: meta.package_code ?? null,
+      title: meta.title ?? 'MTN MashUp',
+      ...mashupContents(meta),
+      amount: Number(order.amount),
+      status: order.status,
+      created_at: order.created_at,
+      completed_at: order.completed_at ?? null,
+    }
+  }
   if (serviceType !== 'data') {
     return {
       reference: order.reference,
@@ -264,6 +299,55 @@ Deno.serve(async (req) => {
           else triggerProviderFulfillment()
           triggerSmsDispatch()
         }
+      }
+    } else if (path === '/v1/mashup-packages' && req.method === 'GET') {
+      const [{ data: packages }, { data: flags }] = await Promise.all([
+        supabase.rpc('get_mashup_packages'),
+        supabase.from('site_settings').select('key, value').in('key', ['mashup_enabled', 'mashup_lane_open']),
+      ])
+      const flag = Object.fromEntries((flags ?? []).map((f) => [f.key, f.value]))
+      responseBody = {
+        success: true,
+        available: flag.mashup_enabled === 'true' && flag.mashup_lane_open !== 'false',
+        currency: 'GHS',
+        packages: ((packages ?? []) as Record<string, unknown>[]).map(mapMashupPackageToApi),
+      }
+    } else if (path === '/v1/buy-mashup' && req.method === 'POST') {
+      const body = (await req.json().catch(() => ({}))) as Record<string, unknown>
+      const phone = String(body.phone ?? '').trim()
+      const packageCode = String(body.package_code ?? '').trim()
+      const reference = body.reference ? String(body.reference).trim() : null
+
+      if (!phone) {
+        statusCode = 400
+        responseBody = { success: false, error: 'phone is required (MTN number e.g. 0241234567)' }
+      } else if (!packageCode) {
+        statusCode = 400
+        responseBody = { success: false, error: 'package_code is required. Use GET /v1/mashup-packages' }
+      } else {
+        const { data: result, error: buyError } = await supabase.rpc('api_buy_mashup', {
+          p_user_id: userId,
+          p_api_key_id: keyId,
+          p_package_code: packageCode,
+          p_phone: phone,
+          p_reference: reference,
+        })
+
+        if (buyError) {
+          statusCode = 500
+          responseBody = { success: false, error: buyError.message }
+        } else if (!result?.success) {
+          statusCode = 400
+          responseBody = result
+        } else {
+          responseBody = {
+            success: true,
+            order: mapOrderToApi(result.order as Record<string, unknown>),
+          }
+          const orderId = (result.order as Record<string, unknown>)?.id
+          if (orderId) triggerProviderFulfillment(String(orderId))
+        }
+        triggerSmsDispatch()
       }
     } else if (path === '/v1/utility-products' && req.method === 'GET') {
       const serviceType = (url.searchParams.get('type') || '').trim().toLowerCase()

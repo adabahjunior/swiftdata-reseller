@@ -6,7 +6,8 @@ import { EmptyState, PageHeader, StatCard, StatusBadge } from '../../components/
 import { useAuth } from '../../context/AuthContext'
 import { MANUAL_TOPUP } from '../../lib/constants'
 import { useApiKeys, useApiLogs, useOrders } from '../../hooks/useDashboardData'
-import { formatCurrency, formatDate, formatNetwork } from '../../lib/format'
+import { formatCurrency, formatDate } from '../../lib/format'
+import { orderNetworkLabel, orderProductLabel } from '../../lib/mashup'
 
 export default function OverviewPage() {
   const { user } = useAuth()
@@ -88,7 +89,7 @@ export default function OverviewPage() {
                   <div className="min-w-0">
                     <p className="font-medium truncate">{order.reference}</p>
                     <p className="text-xs text-muted-foreground">
-                      {formatNetwork(order.network)} · {order.size_gb}GB · {order.phone}
+                      {orderNetworkLabel(order)} · {orderProductLabel(order)} · {order.phone}
                     </p>
                   </div>
                   <div className="text-right shrink-0">

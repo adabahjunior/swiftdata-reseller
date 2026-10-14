@@ -1,5 +1,6 @@
 import * as XLSX from 'xlsx'
-import { formatCurrency, formatDate, formatNetwork } from './format'
+import { formatCurrency, formatDate } from './format'
+import { orderNetworkLabel, orderProductLabel } from './mashup'
 import type { Order, Profile } from '../types/database'
 
 export type OrderWithProfile = Order & { profile?: Pick<Profile, 'full_name' | 'email'> }
@@ -10,7 +11,8 @@ export function ordersToExcelRows(orders: OrderWithProfile[]) {
     'User Name': order.profile?.full_name ?? '',
     'User Email': order.profile?.email ?? '',
     Phone: order.phone,
-    Network: formatNetwork(order.network),
+    Network: orderNetworkLabel(order),
+    Product: orderProductLabel(order),
     'Size (GB)': order.size_gb,
     Amount: Number(order.amount),
     'Amount (GHS)': formatCurrency(Number(order.amount)),
@@ -31,6 +33,7 @@ export function downloadOrdersExcel(orders: OrderWithProfile[], fileLabel: strin
     { wch: 20 },
     { wch: 28 },
     { wch: 14 },
+    { wch: 18 },
     { wch: 18 },
     { wch: 10 },
     { wch: 10 },

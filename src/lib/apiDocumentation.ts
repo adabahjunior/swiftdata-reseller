@@ -191,6 +191,63 @@ export const DOC_ENDPOINTS: DocEndpoint[] = [
 }`,
   },
   {
+    method: 'GET',
+    path: '/v1/mashup-packages',
+    title: 'List MTN MashUp Packages',
+    description:
+      'MTN MashUp is one 30-day package carrying data, MTN-to-MTN minutes, other-network minutes and SMS. Returns the packages on sale with your price and what each one contains. Prices are not in data order (some cheaper packages trade data for minutes), so show your customer the contents, not just the price. "available": false means sales are paused; buying will be refused without charging you.',
+    response: `{
+  "success": true,
+  "available": true,
+  "currency": "GHS",
+  "packages": [
+    {
+      "package_code": "MASHUP10",
+      "title": "MTN MashUp ₵13",
+      "price": 13.00,
+      "data_mb": 511,
+      "data_gb": 0.5,
+      "onnet_minutes": 176,
+      "offnet_minutes": 22,
+      "sms": 45,
+      "validity_days": 30
+    }
+  ]
+}`,
+  },
+  {
+    method: 'POST',
+    path: '/v1/buy-mashup',
+    title: 'Buy MTN MashUp',
+    description:
+      'Buy a MashUp package for an MTN number (024, 025, 053, 054, 055, 059). Send package_code from /v1/mashup-packages; the price is always taken from the catalogue. reference is optional and must be unique. The order starts pending: poll GET /v1/orders/{reference} until completed or failed. If MTN cannot deliver, the order becomes failed and your wallet is refunded automatically.',
+    body: `{
+  "phone": "0241234567",
+  "package_code": "MASHUP10",
+  "reference": "optional-unique-ref"
+}`,
+    response: `{
+  "success": true,
+  "order": {
+    "reference": "MSH-4F1A2B3C4D",
+    "service_type": "mashup",
+    "phone": "0241234567",
+    "package_code": "MASHUP10",
+    "title": "MTN MashUp ₵13",
+    "data_mb": 511,
+    "data_gb": 0.5,
+    "onnet_minutes": 176,
+    "offnet_minutes": 22,
+    "sms": 45,
+    "validity_days": 30,
+    "amount": 13.00,
+    "status": "pending",
+    "created_at": "2026-10-14T12:00:00.000Z",
+    "completed_at": null
+  }
+}`,
+  },
+  {
     method: 'POST',
     path: '/v1/verify-number',
     title: 'Verify MTN Number',
@@ -300,7 +357,7 @@ export const DOC_ENDPOINTS: DocEndpoint[] = [
     path: '/v1/orders',
     title: 'List Orders',
     description:
-      'Returns your orders (data + utilities). Supports ?limit=50&offset=0 (limit max 100). Timestamps are ISO-8601 UTC; the dashboard displays them in Africa/Accra (GMT).',
+      'Returns your orders (data, MTN MashUp and utilities; MashUp orders have the same shape as Buy MTN MashUp). Supports ?limit=50&offset=0 (limit max 100). Timestamps are ISO-8601 UTC; the dashboard displays them in Africa/Accra (GMT).',
     response: `{
   "success": true,
   "orders": [
@@ -360,7 +417,7 @@ export const DOC_ERROR_CODES = [
   {
     code: 400,
     meaning:
-      'Bad request — invalid phone, missing network/size_gb/amount, max 100 verify numbers, or insufficient balance',
+      'Bad request — invalid phone, missing network/size_gb/amount, unknown package_code, duplicate reference, MashUp paused, max 100 verify numbers, or insufficient balance',
   },
   { code: 404, meaning: 'Order or endpoint not found' },
   { code: 502, meaning: 'Upstream provider verification/fulfillment failed' },
@@ -381,6 +438,81 @@ export const DOC_ORDER_STATUSES = [
   { status: 'processing', meaning: 'Being delivered by the provider' },
   { status: 'completed', meaning: 'Delivered (or marked delivered locally)' },
   { status: 'failed', meaning: 'Failed — check dashboard / open a ticket if needed' },
+]
+
+/** Copy-ready MTN MashUp snippets (shown on the docs page and in the copied/PDF docs). */
+export const DOC_MASHUP_EXAMPLES: Array<{ title: string; code: string }> = [
+  {
+    title: 'List MTN MashUp packages (curl)',
+    code: `curl -X GET "${API_BASE_URL}/v1/mashup-packages" \\
+  -H "Authorization: Bearer sk_live_your_api_key"`,
+  },
+  {
+    title: 'Buy MTN MashUp (curl)',
+    code: `curl -X POST "${API_BASE_URL}/v1/buy-mashup" \\
+  -H "Authorization: Bearer sk_live_your_api_key" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "phone": "0241234567",
+    "package_code": "MASHUP10",
+    "reference": "my-order-1001"
+  }'`,
+  },
+  {
+    title: 'Buy MTN MashUp and wait for delivery (JavaScript / Node 18+)',
+    code: `const API = '${API_BASE_URL}'
+const headers = {
+  Authorization: 'Bearer sk_live_your_api_key',
+  'Content-Type': 'application/json',
+}
+
+async function buyMashup(phone, packageCode, reference) {
+  const res = await fetch(\`\${API}/v1/buy-mashup\`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ phone, package_code: packageCode, reference }),
+  })
+  const body = await res.json()
+  if (!body.success) throw new Error(body.error)
+
+  // Poll until MTN confirms (usually instant). A failed order is refunded automatically.
+  for (let i = 0; i < 30; i++) {
+    const check = await fetch(\`\${API}/v1/orders/\${body.order.reference}\`, { headers })
+    const { order } = await check.json()
+    if (order.status === 'completed' || order.status === 'failed') return order
+    await new Promise((r) => setTimeout(r, 10_000))
+  }
+  return body.order
+}
+
+buyMashup('0241234567', 'MASHUP10', 'my-order-1001').then(console.log)`,
+  },
+  {
+    title: 'Buy MTN MashUp (PHP)',
+    code: `<?php
+$ch = curl_init('${API_BASE_URL}/v1/buy-mashup');
+curl_setopt_array($ch, [
+  CURLOPT_POST => true,
+  CURLOPT_RETURNTRANSFER => true,
+  CURLOPT_HTTPHEADER => [
+    'Authorization: Bearer sk_live_your_api_key',
+    'Content-Type: application/json',
+  ],
+  CURLOPT_POSTFIELDS => json_encode([
+    'phone' => '0241234567',
+    'package_code' => 'MASHUP10',
+    'reference' => 'my-order-1001',
+  ]),
+]);
+$result = json_decode(curl_exec($ch), true);
+curl_close($ch);
+
+if (!empty($result['success'])) {
+  echo 'Order ' . $result['order']['reference'] . ' is ' . $result['order']['status'];
+} else {
+  echo 'Error: ' . $result['error'];
+}`,
+  },
 ]
 
 /** Full API docs as plain text (for clipboard copy). */
@@ -452,7 +584,8 @@ Quick Start
 5. POST /v1/submit-numbers — queue unverified MTN numbers for approval
 6. POST /v1/buy-data — purchase data
 7. GET /v1/orders/{reference} — confirm delivery
-8. GET /v1/utility-products + POST /v1/buy-airtime|/buy-ecg|/buy-tv — utilities
+8. GET /v1/mashup-packages + POST /v1/buy-mashup — MTN MashUp (data + minutes + SMS)
+9. GET /v1/utility-products + POST /v1/buy-airtime|/buy-ecg|/buy-tv — utilities
 
 Dashboard (non-API)
 -------------------
@@ -532,6 +665,8 @@ Buy MTN airtime:
       "provider_code": "MTN",
       "amount": 10
     }'
+
+${DOC_MASHUP_EXAMPLES.map((ex) => `${ex.title}:\n${ex.code.replace(/^/gm, '  ')}`).join('\n\n')}
 `
 }
 

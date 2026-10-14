@@ -1,4 +1,5 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.49.1'
+import { processMashup, processMashupOrder, syncMashupCatalog } from './mashup.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -182,6 +183,15 @@ function getActiveProvider(settingsMap: Record<string, string>, envFallback?: st
 
 function isRerouteEnabled(settingsMap: Record<string, string>) {
   return settingsMap.provider_auto_reroute_enabled !== 'false'
+}
+
+async function isAdminRequest(supabase: ReturnType<typeof createClient>, req: Request) {
+  const token = req.headers.get('Authorization')?.replace(/^Bearer\s+/i, '') ?? ''
+  if (!token) return false
+  const { data } = await supabase.auth.getUser(token)
+  if (!data.user) return false
+  const { data: profile } = await supabase.from('profiles').select('is_admin').eq('id', data.user.id).maybeSingle()
+  return Boolean(profile?.is_admin)
 }
 
 /** 0 disables the duplicate hold. */
@@ -521,6 +531,7 @@ async function claimOrder(supabase: ReturnType<typeof createClient>, orderId: st
       provider_error: null,
     })
     .eq('id', orderId)
+    .eq('service_type', 'data')
     .is('provider_submitted_at', null)
     .select(ORDER_CLAIM_COLUMNS)
     .maybeSingle()
@@ -791,13 +802,20 @@ Deno.serve(async (req) => {
     if (req.method === 'POST' && path === '/process') {
       const settingsMap = await loadSettings()
 
+      let mashup: unknown
+      try {
+        mashup = await processMashup(supabase, settingsMap)
+      } catch (e) {
+        mashup = { error: (e as Error).message }
+      }
+
       if (settingsMap.provider_fulfillment_enabled === 'false') {
-        return json({ success: true, processed: 0, message: 'Provider fulfillment disabled' })
+        return json({ success: true, processed: 0, message: 'Provider fulfillment disabled', mashup })
       }
 
       const chain = getProviderChain(settingsMap, envFallback)
       if (chain.length === 0) {
-        return json({ success: false, error: 'No provider slot has an API credential configured' }, 500)
+        return json({ success: false, error: 'No provider slot has an API credential configured', mashup }, 500)
       }
 
       const mtnKey = settingsMap.provider_mtn_network_key || 'YELLO'
@@ -828,13 +846,37 @@ Deno.serve(async (req) => {
         succeeded: results.filter((r) => r.success).length,
         failed: results.filter((r) => r.success === false).length,
         results,
+        mashup,
       })
+    }
+
+    if (req.method === 'POST' && path === '/mashup/sync') {
+      if (!(await isAdminRequest(supabase, req))) {
+        return json({ success: false, error: 'Admin only' }, 403)
+      }
+      const result = await syncMashupCatalog(supabase, await loadSettings())
+      return json(result, result.success ? 200 : 502)
     }
 
     if (req.method === 'POST' && path.startsWith('/order/')) {
       const orderId = path.replace('/order/', '').trim()
       if (!orderId) {
         return json({ success: false, error: 'Order id required' }, 400)
+      }
+
+      const { data: kind } = await supabase.from('orders').select('service_type').eq('id', orderId).maybeSingle()
+      if (!kind) {
+        return json({ success: false, error: 'Order not found' }, 404)
+      }
+      if (kind.service_type === 'mashup') {
+        return json({ success: true, result: await processMashupOrder(supabase, await loadSettings(), orderId) })
+      }
+      if (kind.service_type && kind.service_type !== 'data') {
+        const res = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/fulfill-xcel-orders/order/${orderId}`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}` },
+        })
+        return json(await res.json().catch(() => ({ success: false, error: 'Utility fulfillment unavailable' })), res.status)
       }
 
       const settingsMap = await loadSettings()
@@ -895,7 +937,8 @@ Deno.serve(async (req) => {
       endpoints: {
         'POST /process':
           'Submit pending orders to the active provider, auto re-routing definite rejections to the next provider slot',
-        'POST /order/{id}': 'Submit one order (same re-routing rules)',
+        'POST /order/{id}': 'Submit one order (same re-routing rules); MashUp and utility orders go to their own provider',
+        'POST /mashup/sync': 'Admin: refresh the MTN MashUp catalogue, lane and balance from DataMart',
         'GET /health?slot=': 'Check the active provider, or a specific slot (primary/secondary/tertiary/quaternary/quinary)',
       },
     })

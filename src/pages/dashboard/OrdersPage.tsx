@@ -5,7 +5,8 @@ import { EmptyState, PageHeader, Panel, StatusBadge } from '../../components/das
 import { useAuth } from '../../context/AuthContext'
 import { useOrders } from '../../hooks/useDashboardData'
 import { PACKAGE_NETWORKS } from '../../lib/constants'
-import { formatCurrency, formatDate, formatNetwork } from '../../lib/format'
+import { formatCurrency, formatDate } from '../../lib/format'
+import { orderNetworkLabel, orderProductLabel } from '../../lib/mashup'
 import { deliveryStatusLabel } from '../../lib/deliveryStatus'
 import { triggerOrderFulfillment } from '../../lib/providerFulfillment'
 import { triggerProviderStatusSync } from '../../lib/providerStatusSync'
@@ -139,8 +140,8 @@ export default function OrdersPage() {
                   <tr key={order.id} className="hover:bg-white/[0.02]">
                     <td className="px-5 md:px-6 py-3 font-mono text-xs">{order.reference}</td>
                     <td className="px-5 md:px-6 py-3">{order.phone}</td>
-                    <td className="px-5 md:px-6 py-3">{formatNetwork(order.network)}</td>
-                    <td className="px-5 md:px-6 py-3">{order.size_gb} GB</td>
+                    <td className="px-5 md:px-6 py-3">{orderNetworkLabel(order)}</td>
+                    <td className="px-5 md:px-6 py-3">{orderProductLabel(order)}</td>
                     <td className="px-5 md:px-6 py-3 font-bold">{formatCurrency(Number(order.amount))}</td>
                     <td className="px-5 md:px-6 py-3">
                       <StatusBadge status={order.status} />

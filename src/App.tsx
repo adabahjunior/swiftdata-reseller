@@ -9,6 +9,7 @@ import OverviewPage from './pages/dashboard/OverviewPage'
 import ApiBalancePage from './pages/dashboard/ApiBalancePage'
 import PlaceOrderPage from './pages/dashboard/PlaceOrderPage'
 import UtilitiesOrderPage from './pages/dashboard/UtilitiesOrderPage'
+import MashupOrderPage from './pages/dashboard/MashupOrderPage'
 import OrdersPage from './pages/dashboard/OrdersPage'
 import RefundsPage from './pages/dashboard/RefundsPage'
 import DataPackagesPage from './pages/dashboard/DataPackagesPage'
@@ -23,6 +24,7 @@ import AdminRefundsPage from './pages/admin/AdminRefundsPage'
 import AdminNumberVerificationsPage from './pages/admin/AdminNumberVerificationsPage'
 import AdminPackagesPage from './pages/admin/AdminPackagesPage'
 import AdminUtilityProductsPage from './pages/admin/AdminUtilityProductsPage'
+import AdminMashupPage from './pages/admin/AdminMashupPage'
 import AdminUsersPage from './pages/admin/AdminUsersPage'
 import AdminUserDetailPage from './pages/admin/AdminUserDetailPage'
 import AdminNotificationsPage from './pages/admin/AdminNotificationsPage'
@@ -48,6 +50,7 @@ export default function App() {
               <Route index element={<OverviewPage />} />
               <Route path="balance" element={<ApiBalancePage />} />
               <Route path="place-order" element={<PlaceOrderPage />} />
+              <Route path="mashup" element={<MashupOrderPage />} />
               <Route path="utilities" element={<UtilitiesOrderPage />} />
               <Route path="verify-numbers" element={<VerifyNumbersPage />} />
               <Route path="orders" element={<OrdersPage />} />
@@ -72,6 +75,7 @@ export default function App() {
               <Route path="tickets" element={<AdminTicketsPage />} />
               <Route path="banners" element={<AdminBannersPage />} />
               <Route path="packages" element={<AdminPackagesPage />} />
+              <Route path="mashup" element={<AdminMashupPage />} />
               <Route path="utilities" element={<AdminUtilityProductsPage />} />
               <Route path="users" element={<AdminUsersPage />} />
               <Route path="users/:userId" element={<AdminUserDetailPage />} />

@@ -10,7 +10,8 @@ import { canAdminRetryOrder, deliveryStatusLabel, deliveryStatusTone } from '../
 import { triggerOrderFulfillment } from '../../lib/providerFulfillment'
 import { triggerProviderStatusSync } from '../../lib/providerStatusSync'
 import { supabase } from '../../lib/supabase'
-import { formatCurrency, formatDate, formatNetwork } from '../../lib/format'
+import { formatCurrency, formatDate } from '../../lib/format'
+import { orderNetworkLabel, orderProductLabel } from '../../lib/mashup'
 import type { Order } from '../../types/database'
 
 const ORDER_STATUSES: Order['status'][] = ['pending', 'processing', 'completed', 'failed']
@@ -417,7 +418,12 @@ export default function AdminOrdersPage() {
                       </p>
                     </td>
                     <td className="px-5 md:px-6 py-3">{order.phone}</td>
-                    <td className="px-5 md:px-6 py-3">{formatNetwork(order.network)}</td>
+                    <td className="px-5 md:px-6 py-3">
+                      {orderNetworkLabel(order)}
+                      {order.service_type === 'mashup' && (
+                        <p className="text-xs text-muted-foreground">{orderProductLabel(order)}</p>
+                      )}
+                    </td>
                     <td className="px-5 md:px-6 py-3 font-bold">{formatCurrency(Number(order.amount))}</td>
                     <td className="px-5 md:px-6 py-3">
                       <span

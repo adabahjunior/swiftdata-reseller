@@ -3,6 +3,7 @@ import {
   BarChart3,
   BookOpen,
   Key,
+  Layers,
   LayoutDashboard,
   LogOut,
   Menu,
@@ -42,6 +43,7 @@ const ICONS = {
   ShieldCheck,
   MessageCircle,
   Zap,
+  Layers,
 }
 
 interface SidebarProps {

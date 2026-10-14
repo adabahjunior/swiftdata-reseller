@@ -4,12 +4,111 @@ import { PageHeader } from '../../components/dashboard/ui'
 import {
   DOC_ENDPOINTS,
   DOC_ERROR_CODES,
+  DOC_MASHUP_EXAMPLES,
   DOC_ORDER_STATUSES,
   DOC_VERIFY_STATUSES,
   buildApiDocsText,
   downloadApiDocsPdf,
 } from '../../lib/apiDocumentation'
 import { API_BASE_URL, API_NETWORKS } from '../../lib/constants'
+
+const AUTH = 'Authorization: Bearer sk_live_your_api_key'
+
+const EXAMPLES: Array<{ title: string; code: string }> = [
+  {
+    title: 'Check balance',
+    code: `curl -X GET "${API_BASE_URL}/v1/balance" \\
+  -H "${AUTH}"`,
+  },
+  {
+    title: 'Verify MTN number',
+    code: `curl -X POST "${API_BASE_URL}/v1/verify-number" \\
+  -H "${AUTH}" \\
+  -H "Content-Type: application/json" \\
+  -d '{"phone":"0241234567"}'`,
+  },
+  {
+    title: 'Bulk verify MTN numbers',
+    code: `curl -X POST "${API_BASE_URL}/v1/verify-number/bulk" \\
+  -H "${AUTH}" \\
+  -H "Content-Type: application/json" \\
+  -d '{"phones":["0241234567","0559876543","0538122730"]}'`,
+  },
+  {
+    title: 'Submit MTN numbers for approval',
+    code: `curl -X POST "${API_BASE_URL}/v1/submit-numbers" \\
+  -H "${AUTH}" \\
+  -H "Content-Type: application/json" \\
+  -d '{"phones":["0559876543","0538122730"],"note":"API batch"}'`,
+  },
+  {
+    title: 'Buy Yello 1GB',
+    code: `curl -X POST "${API_BASE_URL}/v1/buy-data" \\
+  -H "${AUTH}" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "phone": "0241234567",
+    "network": "yello",
+    "size_gb": 1
+  }'`,
+  },
+  {
+    title: 'Buy AirtelTigo iShare 2GB',
+    code: `curl -X POST "${API_BASE_URL}/v1/buy-data" \\
+  -H "${AUTH}" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "phone": "0271234567",
+    "network": "at_ishare",
+    "size_gb": 2
+  }'`,
+  },
+  {
+    title: 'Buy MTN airtime',
+    code: `curl -X POST "${API_BASE_URL}/v1/buy-airtime" \\
+  -H "${AUTH}" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "phone": "0241234567",
+    "provider_code": "MTN",
+    "amount": 10
+  }'`,
+  },
+  {
+    title: 'Poll order status',
+    code: `curl -X GET "${API_BASE_URL}/v1/orders/ORD-ABC123XYZ" \\
+  -H "${AUTH}"`,
+  },
+]
+
+function CodeBlock({ code, tone = 'text-muted-foreground' }: { code: string; tone?: string }) {
+  const [copied, setCopied] = useState(false)
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(code)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch {
+      /* clipboard blocked; the text stays selectable */
+    }
+  }
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={() => void copy()}
+        aria-label="Copy code"
+        className="absolute top-2 right-2 inline-flex items-center gap-1 h-7 px-2 rounded-md border border-white/10 bg-black/70 text-[11px] text-muted-foreground hover:text-foreground"
+      >
+        {copied ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
+        {copied ? 'Copied' : 'Copy'}
+      </button>
+      <pre className={`text-xs font-mono bg-black/40 border border-white/10 rounded-xl p-4 pr-24 overflow-x-auto ${tone}`}>
+        {code}
+      </pre>
+    </div>
+  )
+}
 
 export default function DocumentationPage() {
   const [copied, setCopied] = useState(false)
@@ -78,9 +177,7 @@ export default function DocumentationPage() {
 
       <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-5 md:p-6 space-y-4">
         <h2 className="font-display font-bold text-lg">Base URL</h2>
-        <pre className="text-xs font-mono bg-black/40 border border-white/10 rounded-xl p-4 overflow-x-auto text-primary">
-          {API_BASE_URL}
-        </pre>
+        <CodeBlock code={API_BASE_URL} tone="text-primary" />
       </div>
 
       <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-5 md:p-6 space-y-4">
@@ -90,10 +187,7 @@ export default function DocumentationPage() {
           <code className="text-xs bg-secondary px-1.5 py-0.5 rounded">Authorization</code> header.
           Generate a key from <strong>My API</strong> in your dashboard.
         </p>
-        <pre className="text-xs font-mono bg-black/40 border border-white/10 rounded-xl p-4 overflow-x-auto">
-          {`Authorization: Bearer sk_live_your_api_key
-Content-Type: application/json`}
-        </pre>
+        <CodeBlock code={`${AUTH}\nContent-Type: application/json`} tone="text-foreground" />
       </div>
 
       <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-5 md:p-6 space-y-4">
@@ -158,6 +252,10 @@ Content-Type: application/json`}
             — confirm delivery
           </li>
           <li>
+            MTN MashUp: <code className="text-xs bg-secondary px-1 rounded">GET /v1/mashup-packages</code> +{' '}
+            <code className="text-xs bg-secondary px-1 rounded">POST /v1/buy-mashup</code> (data + minutes + SMS)
+          </li>
+          <li>
             Optional:{' '}
             <code className="text-xs bg-secondary px-1 rounded">GET /v1/utility-products</code> +{' '}
             <code className="text-xs bg-secondary px-1 rounded">POST /v1/buy-airtime|/buy-ecg|/buy-tv</code>
@@ -167,6 +265,39 @@ Content-Type: application/json`}
           Timestamps from the API are UTC. The dashboard shows times in <strong>Africa/Accra (GMT)</strong>.
           Tickets, customers, and analytics are dashboard-only (not REST endpoints).
         </p>
+      </div>
+
+      <div id="mtn-mashup" className="rounded-2xl border border-primary/30 bg-primary/[0.04] p-5 md:p-6 space-y-4">
+        <h2 className="font-display font-bold text-lg">MTN MashUp</h2>
+        <p className="text-sm text-muted-foreground">
+          Sell MTN MashUp from your own app: one 30-day package with data, MTN-to-MTN minutes, other-network minutes and
+          SMS, paid from the same wallet with the same API key.
+        </p>
+        <ol className="list-decimal list-inside space-y-1.5 text-sm text-muted-foreground">
+          <li>
+            Call <code className="text-xs bg-secondary px-1 rounded">GET /v1/mashup-packages</code> and show your customer
+            each package&apos;s contents. Don&apos;t hardcode prices; read them from this list.
+          </li>
+          <li>
+            Buy with <code className="text-xs bg-secondary px-1 rounded">POST /v1/buy-mashup</code> using the{' '}
+            <code className="text-xs bg-secondary px-1 rounded">package_code</code> and an MTN number (024, 025, 053, 054,
+            055, 059).
+          </li>
+          <li>
+            Poll <code className="text-xs bg-secondary px-1 rounded">GET /v1/orders/{'{reference}'}</code> until{' '}
+            <code className="text-xs bg-secondary px-1 rounded">completed</code> or{' '}
+            <code className="text-xs bg-secondary px-1 rounded">failed</code>. Failed MashUp orders are refunded to your
+            wallet automatically.
+          </li>
+        </ol>
+        <div className="space-y-4">
+          {DOC_MASHUP_EXAMPLES.map((ex) => (
+            <div key={ex.title}>
+              <p className="text-sm font-medium mb-2">{ex.title}</p>
+              <CodeBlock code={ex.code} />
+            </div>
+          ))}
+        </div>
       </div>
 
       <div className="space-y-4">
@@ -199,16 +330,12 @@ Content-Type: application/json`}
               {ep.body && (
                 <div>
                   <p className="text-xs font-medium text-muted-foreground mb-1.5">Request Body</p>
-                  <pre className="text-xs font-mono bg-black/40 border border-white/10 rounded-xl p-4 overflow-x-auto text-muted-foreground">
-                    {ep.body}
-                  </pre>
+                  <CodeBlock code={ep.body} />
                 </div>
               )}
               <div>
                 <p className="text-xs font-medium text-muted-foreground mb-1.5">Example Response</p>
-                <pre className="text-xs font-mono bg-black/40 border border-white/10 rounded-xl p-4 overflow-x-auto text-emerald-400/80">
-                  {ep.response}
-                </pre>
+                <CodeBlock code={ep.response} tone="text-emerald-400/80" />
               </div>
             </div>
           </div>
@@ -257,94 +384,12 @@ Content-Type: application/json`}
 
       <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-5 md:p-6 space-y-4">
         <h2 className="font-display font-bold text-lg">Examples</h2>
-
-        <div>
-          <p className="text-sm font-medium mb-2">Check balance</p>
-          <pre className="text-xs font-mono bg-black/40 border border-white/10 rounded-xl p-4 overflow-x-auto text-muted-foreground">
-{`curl -X GET "${API_BASE_URL}/v1/balance" \\
-  -H "Authorization: Bearer sk_live_your_api_key"`}
-          </pre>
-        </div>
-
-        <div>
-          <p className="text-sm font-medium mb-2">Verify MTN number</p>
-          <pre className="text-xs font-mono bg-black/40 border border-white/10 rounded-xl p-4 overflow-x-auto text-muted-foreground">
-{`curl -X POST "${API_BASE_URL}/v1/verify-number" \\
-  -H "Authorization: Bearer sk_live_your_api_key" \\
-  -H "Content-Type: application/json" \\
-  -d '{"phone":"0241234567"}'`}
-          </pre>
-        </div>
-
-        <div>
-          <p className="text-sm font-medium mb-2">Bulk verify MTN numbers</p>
-          <pre className="text-xs font-mono bg-black/40 border border-white/10 rounded-xl p-4 overflow-x-auto text-muted-foreground">
-{`curl -X POST "${API_BASE_URL}/v1/verify-number/bulk" \\
-  -H "Authorization: Bearer sk_live_your_api_key" \\
-  -H "Content-Type: application/json" \\
-  -d '{"phones":["0241234567","0559876543","0538122730"]}'`}
-          </pre>
-        </div>
-
-        <div>
-          <p className="text-sm font-medium mb-2">Submit MTN numbers for approval</p>
-          <pre className="text-xs font-mono bg-black/40 border border-white/10 rounded-xl p-4 overflow-x-auto text-muted-foreground">
-{`curl -X POST "${API_BASE_URL}/v1/submit-numbers" \\
-  -H "Authorization: Bearer sk_live_your_api_key" \\
-  -H "Content-Type: application/json" \\
-  -d '{"phones":["0559876543","0538122730"],"note":"API batch"}'`}
-          </pre>
-        </div>
-
-        <div>
-          <p className="text-sm font-medium mb-2">Buy Yello 1GB</p>
-          <pre className="text-xs font-mono bg-black/40 border border-white/10 rounded-xl p-4 overflow-x-auto text-muted-foreground">
-{`curl -X POST "${API_BASE_URL}/v1/buy-data" \\
-  -H "Authorization: Bearer sk_live_your_api_key" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "phone": "0241234567",
-    "network": "yello",
-    "size_gb": 1
-  }'`}
-          </pre>
-        </div>
-
-        <div>
-          <p className="text-sm font-medium mb-2">Buy AirtelTigo iShare 2GB</p>
-          <pre className="text-xs font-mono bg-black/40 border border-white/10 rounded-xl p-4 overflow-x-auto text-muted-foreground">
-{`curl -X POST "${API_BASE_URL}/v1/buy-data" \\
-  -H "Authorization: Bearer sk_live_your_api_key" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "phone": "0271234567",
-    "network": "at_ishare",
-    "size_gb": 2
-  }'`}
-          </pre>
-        </div>
-
-        <div>
-          <p className="text-sm font-medium mb-2">Buy MTN airtime</p>
-          <pre className="text-xs font-mono bg-black/40 border border-white/10 rounded-xl p-4 overflow-x-auto text-muted-foreground">
-{`curl -X POST "${API_BASE_URL}/v1/buy-airtime" \\
-  -H "Authorization: Bearer sk_live_your_api_key" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "phone": "0241234567",
-    "provider_code": "MTN",
-    "amount": 10
-  }'`}
-          </pre>
-        </div>
-
-        <div>
-          <p className="text-sm font-medium mb-2">Poll order status</p>
-          <pre className="text-xs font-mono bg-black/40 border border-white/10 rounded-xl p-4 overflow-x-auto text-muted-foreground">
-{`curl -X GET "${API_BASE_URL}/v1/orders/ORD-ABC123XYZ" \\
-  -H "Authorization: Bearer sk_live_your_api_key"`}
-          </pre>
-        </div>
+        {EXAMPLES.map((ex) => (
+          <div key={ex.title}>
+            <p className="text-sm font-medium mb-2">{ex.title}</p>
+            <CodeBlock code={ex.code} />
+          </div>
+        ))}
       </div>
     </div>
   )

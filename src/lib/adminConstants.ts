@@ -21,6 +21,7 @@ export const ADMIN_NAV_GROUPS: NavGroupDef[] = [
     label: 'Catalog',
     items: [
       { label: 'Packages', to: '/admin/packages', icon: 'Package' },
+      { label: 'MTN MashUp', to: '/admin/mashup', icon: 'Layers' },
       { label: 'Utilities', to: '/admin/utilities', icon: 'Zap' },
       { label: 'Banners', to: '/admin/banners', icon: 'Image' },
     ],
@@ -54,6 +55,7 @@ export const ADMIN_PAGE_TITLES: Record<string, string> = {
   '/admin/tickets': 'Support Tickets',
   '/admin/banners': 'Dashboard Banners',
   '/admin/packages': 'Packages',
+  '/admin/mashup': 'MTN MashUp',
   '/admin/utilities': 'Utility Products',
   '/admin/users': 'Users',
   '/admin/notifications': 'Notifications',

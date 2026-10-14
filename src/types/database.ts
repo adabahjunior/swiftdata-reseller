@@ -66,8 +66,9 @@ export interface Order {
   provider_type: string | null
   provider_attempts?: number
   provider_route_round?: number
-  service_type?: 'data' | 'airtime' | 'ecg' | 'tv'
+  service_type?: 'data' | 'airtime' | 'ecg' | 'tv' | 'mashup'
   utility_product_id?: string | null
+  mashup_package_id?: string | null
   face_amount?: number | null
   utility_meta?: Record<string, unknown>
 }
