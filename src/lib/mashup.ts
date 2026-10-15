@@ -24,8 +24,14 @@ export type AdminMashupPackage = MashupPackage & {
 
 export const MTN_MASHUP_PREFIXES = ['024', '025', '053', '054', '055', '059'] as const
 
+/** Accepts 0XXXXXXXXX, 233XXXXXXXXX or +233 XX XXX XXXX and returns the 0-prefixed form. */
+export function normalizeMashupPhone(phone: string) {
+  const digits = phone.replace(/[\s+\-()]/g, '')
+  return /^233\d{9}$/.test(digits) ? `0${digits.slice(3)}` : digits
+}
+
 export function isMtnMashupNumber(phone: string) {
-  return /^0(24|25|53|54|55|59)\d{7}$/.test(phone.replace(/\s/g, ''))
+  return /^0(24|25|53|54|55|59)\d{7}$/.test(normalizeMashupPhone(phone))
 }
 
 export function formatMashupData(mb: number) {
