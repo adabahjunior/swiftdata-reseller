@@ -1,4 +1,4 @@
-import { Layers, MessageSquare, Phone, PhoneCall, Send, Wifi } from 'lucide-react'
+import { Check, Layers, MessageSquare, Phone, PhoneCall, Send, Wifi } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { EmptyState, PageHeader, Panel } from '../../components/dashboard/ui'
@@ -13,6 +13,106 @@ import {
 } from '../../lib/mashup'
 import { triggerOrderFulfillment, triggerProviderFulfillment } from '../../lib/providerFulfillment'
 import { supabase } from '../../lib/supabase'
+
+function MashupPackageCard({
+  pkg,
+  active,
+  index,
+  onSelect,
+}: {
+  pkg: MashupPackage
+  active: boolean
+  index: number
+  onSelect: () => void
+}) {
+  const dataLabel = formatMashupData(pkg.mb)
+  const [dataValue, dataUnit] = (() => {
+    const parts = dataLabel.split(' ')
+    return [parts[0], parts.slice(1).join(' ') || 'MB'] as const
+  })()
+
+  const stats = [
+    { icon: Phone, value: pkg.onnet_mins, label: 'MTN mins' },
+    { icon: PhoneCall, value: pkg.offnet_mins, label: 'Other mins' },
+    { icon: MessageSquare, value: pkg.sms, label: 'SMS' },
+  ] as const
+
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      aria-pressed={active}
+      style={{ animationDelay: `${Math.min(index, 11) * 40}ms` }}
+      className={`group relative animate-fade-in-up text-left overflow-hidden rounded-2xl border transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 ${
+        active
+          ? 'border-primary/60 bg-gradient-to-br from-primary/15 via-primary/5 to-transparent shadow-[0_0_0_1px_hsl(51_100%_50%/0.25),0_12px_40px_-12px_hsl(51_100%_50%/0.35)]'
+          : 'border-white/10 bg-white/[0.03] hover:border-white/25 hover:bg-white/[0.05]'
+      }`}
+    >
+      <div
+        className={`pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-primary/70 to-transparent transition-opacity ${
+          active ? 'opacity-100' : 'opacity-0 group-hover:opacity-60'
+        }`}
+      />
+      <div
+        className={`pointer-events-none absolute -right-8 -top-10 h-28 w-28 rounded-full bg-primary/20 blur-2xl transition-opacity ${
+          active ? 'opacity-70' : 'opacity-0 group-hover:opacity-40'
+        }`}
+      />
+
+      <div className="relative p-4 sm:p-5">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+              {pkg.validity_days}-day mashup
+            </p>
+            <div className="mt-1.5 flex items-end gap-1.5">
+              <span className="font-display text-3xl font-bold leading-none tracking-tight tabular-nums">
+                {dataValue}
+              </span>
+              <span className="pb-0.5 text-sm font-semibold text-muted-foreground">{dataUnit}</span>
+            </div>
+            <p className="mt-1.5 flex items-center gap-1.5 text-xs text-muted-foreground">
+              <Wifi className="h-3.5 w-3.5 shrink-0 text-primary/80" />
+              <span className="truncate">{pkg.title}</span>
+            </p>
+          </div>
+
+          <div className="shrink-0 text-right">
+            <p className="font-display text-xl font-bold tabular-nums text-primary leading-none">
+              {formatCurrency(pkg.price)}
+            </p>
+            <div
+              className={`mt-2 ml-auto flex h-6 w-6 items-center justify-center rounded-full border transition-colors ${
+                active
+                  ? 'border-primary bg-primary text-primary-foreground'
+                  : 'border-white/15 bg-transparent text-transparent group-hover:border-white/30'
+              }`}
+            >
+              <Check className="h-3.5 w-3.5" strokeWidth={3} />
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-4 grid grid-cols-3 gap-2 border-t border-white/10 pt-3">
+          {stats.map(({ icon: Icon, value, label }) => (
+            <div key={label} className="min-w-0">
+              <div className="flex items-center gap-1 text-muted-foreground">
+                <Icon className="h-3 w-3 shrink-0" />
+                <span className="truncate text-[10px] uppercase tracking-wide">{label}</span>
+              </div>
+              <p className="mt-0.5 font-display text-base font-semibold tabular-nums leading-tight">{value}</p>
+            </div>
+          ))}
+        </div>
+
+        <p className="mt-3 text-[11px] text-muted-foreground">
+          Code <span className="font-mono text-foreground/80">{pkg.code}</span>
+        </p>
+      </div>
+    </button>
+  )
+}
 
 type Tab = 'single' | 'bulk'
 
@@ -213,40 +313,17 @@ export default function MashupOrderPage() {
         ) : packages.length === 0 ? (
           <EmptyState title="No MashUp packages yet" description="Packages appear here once MTN MashUp is switched on." />
         ) : (
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-            {packages.map((p) => {
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+            {packages.map((p, index) => {
               const active = p.id === selectedId
               return (
-                <button
+                <MashupPackageCard
                   key={p.id}
-                  type="button"
-                  onClick={() => setSelectedId(active && tab === 'bulk' ? null : p.id)}
-                  className={`text-left rounded-xl border p-4 transition ${
-                    active ? 'border-primary bg-primary/10' : 'border-white/10 bg-white/[0.02] hover:border-white/25'
-                  }`}
-                >
-                  <div className="flex items-baseline justify-between gap-2">
-                    <span className="font-bold">{p.title}</span>
-                    <span className="font-black text-lg text-primary">{formatCurrency(p.price)}</span>
-                  </div>
-                  <ul className="mt-3 space-y-1.5 text-sm text-muted-foreground">
-                    <li className="flex items-center gap-2">
-                      <Wifi className="h-3.5 w-3.5" /> {formatMashupData(p.mb)} data
-                    </li>
-                    <li className="flex items-center gap-2">
-                      <Phone className="h-3.5 w-3.5" /> {p.onnet_mins} min MTN to MTN
-                    </li>
-                    <li className="flex items-center gap-2">
-                      <PhoneCall className="h-3.5 w-3.5" /> {p.offnet_mins} min to other networks
-                    </li>
-                    <li className="flex items-center gap-2">
-                      <MessageSquare className="h-3.5 w-3.5" /> {p.sms} SMS
-                    </li>
-                  </ul>
-                  <p className="mt-3 text-[11px] text-muted-foreground">
-                    Valid {p.validity_days} days · code <span className="font-mono">{p.code}</span>
-                  </p>
-                </button>
+                  pkg={p}
+                  active={active}
+                  index={index}
+                  onSelect={() => setSelectedId(active && tab === 'bulk' ? null : p.id)}
+                />
               )
             })}
           </div>
